@@ -31,6 +31,7 @@ Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. A
 | `game/runner.c` | The endless runner: Max's jump, the track, collisions and the score. Portable, no drawing |
 | `game/autoplay.c` | A player that clears every fire, for the tests and the debug build |
 | `wii/nand.c` | ISFS. No other file reads the NAND |
+| `wii/readonly.c` | The replacement for `IOS_Write`, linked into every Wii binary |
 | `wii/http.c` | Plain HTTP over libogc sockets. No TLS |
 | `wii/gfx.c` | GX. No other file draws |
 | `wii/play.c` | The game loop: Wii Remote input, the scenery and its colors, the score digits |
@@ -38,6 +39,7 @@ Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. A
 | `wii/debug.c` | The debug build's entry point: scripted play and frame capture |
 | `tools/atlas.py` | Packs the pictures into one Wii texture |
 | `tools/shots.sh`, `tools/listener.py` | The frame capture run behind `make shots` |
+| `tools/nand_guard.sh` | The build check that a Wii binary has no way to write the NAND |
 | `tests/test_core.c` | A synthetic image builder and the core tests |
 | `tests/test_game.c` | The game tests |
 
@@ -69,11 +71,29 @@ These follow "A Philosophy of Software Design".
 
 ## Safety and privacy
 
-- The Wii app opens NAND files for reading only. No code path calls an ISFS function that writes, creates, renames or deletes.
+A user's console must still start after any run of this software. This outranks every feature.
+
+- **No binary writes to the console's internal storage (the NAND).** libogc 2.13 writes it without being asked: `WPAD_Init` and every exit save the Wii Remote list to `/shared2/sys/SYSCONF`, and a return to the Wii Menu writes `state.dat` and `NANDBOOTINFO`. `wii/readonly.c` replaces `IOS_Write` for the whole binary. `tools/nand_guard.sh` fails the build when a binary contains `IOS_Write`, or an ISFS or ES function that is not on its read-only list.
+- **Only `wii/nand.c` opens a NAND file, and only with `ISFS_OPEN_READ`.** No file under `wii/` calls an `IOS_` function. The guard checks both.
+- **A change of `DEVKIT_IMAGE` needs a new read of libogc's write paths:** `libogc/conf.c`, `libogc/wiilaunch.c` and `wiiuse/wpad.c`. A write that goes through an ioctl passes the guard.
+- **The project builds no WAD and installs nothing on the console.** The app runs from the SD card through the Homebrew Channel. A channel banner that the Wii Menu cannot parse stops the menu from starting. No tool proves a banner safe, and a banner that renders in Dolphin can still fail on a console.
+- **Dolphin proves drawing and logic, nothing else.** It grants every file access, skips IOS patches and reports the network as connected. Do not claim support for a console type (Wii, Wii mini, Wii U) before a run on that type.
 - `samples/` and `*.vff` are never committed. A dump holds the owner's messages, photos and a console ID.
 - Committed fixtures are synthetic. Do not derive one from a real dump.
 - `playlog.c` never parses the sent-message buffer that follows the sessions. It holds friend names.
-- A WAD goes on a real console only after its banner renders in Dolphin's Wii Menu, and only on a console with Priiloader or BootMii as boot2 and a fresh NAND backup.
+
+### Rules for the first run on a console
+
+None of this is built. On a console, IOS can refuse the Message Board file, and the fix is libpatcher (WiiLink24, MIT), which patches IOS in memory.
+
+- Check that `HW_AHBPROT` (`0x0D800064`) reads `0xFFFFFFFF` before any patch. libpatcher does not check.
+- Call only `patch_ahbprot_reset` and `patch_isfs_permissions`, and call them before WPAD, ISFS and the network start, because the first one reloads IOS.
+- Never call `apply_patches`, `patch_ios_verify`, `patch_es_identify`, `ES_Identify` or `ES_SetUID`. Never depend on a custom IOS.
+- `patch_isfs_permissions` removes the permission check for writes too, until the next IOS reload. The write block above is what stops libogc from using that.
+- A missing `HW_AHBPROT` or a patch that returns false means no sync. The game still runs.
+- A mode that Priiloader starts at every power-on must never call `exit`, must end by writing Priiloader's "Pune" word and launching the Wii Menu, and must bound its total run time. A Wii mini and a Wii U have no RESET button to escape a hang.
+
+Sources: WiiBrew (`Brick`, `/dev/fs`, `/dev/es`, `Hardware/NAND`), HackMii, wii.hacks.guide, and the libogc 2.13.0, libpatcher, Priiloader and Homebrew Channel source.
 
 ## Provenance
 

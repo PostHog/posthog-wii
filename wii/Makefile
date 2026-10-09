@@ -12,11 +12,14 @@ DEBUG_HOST ?=
 
 OUT := ../build/wii
 GEN := ../build/gen
-GAME := http.c gfx.c play.c ../game/runner.c $(GEN)/hedgehog_tpl.s
+GAME := readonly.c http.c gfx.c play.c ../game/runner.c $(GEN)/hedgehog_tpl.s
 HEADERS := $(wildcard *.h ../core/*.h ../game/*.h) $(GEN)/atlas.h $(OUT)/settings.h
+GUARD := ../tools/nand_guard.sh
 
 CFLAGS := -std=gnu11 -g -O2 -Wall -Wextra -Werror $(MACHDEP) -I../core -I../game -I$(GEN) -I$(OUT) -I$(LIBOGC_INC)
-LIBS := -L$(LIBOGC_LIB) -lwiiuse -lbte -logc -lm
+# See readonly.c.
+WRAP := -Wl,--wrap=IOS_Write -Wl,--wrap=IOS_WriteAsync
+LIBS := $(WRAP) -L$(LIBOGC_LIB) -lwiiuse -lbte -logc -lm
 
 define SETTINGS_H
 #define POSTHOG_HOST "$(HOST)"
@@ -30,12 +33,14 @@ $(OUT)/boot.dol: $(OUT)/boot.elf
 	elf2dol $< $@
 
 # The app: the play history sync, then the game.
-$(OUT)/boot.elf: main.c nand.c $(GAME) $(wildcard ../core/*.c) $(HEADERS) Makefile
+$(OUT)/boot.elf: main.c nand.c $(GAME) $(wildcard ../core/*.c) $(HEADERS) $(GUARD) Makefile
 	$(CC) $(CFLAGS) $(filter %.c %.s,$^) $(LIBS) -o $@
+	bash $(GUARD) $@ || { rm -f $@; exit 1; }
 
 # The debug build: the game alone, playing by itself. See debug.c.
-$(OUT)/debug.elf: debug.c ../game/autoplay.c $(GAME) $(HEADERS) Makefile
+$(OUT)/debug.elf: debug.c ../game/autoplay.c $(GAME) $(HEADERS) $(GUARD) Makefile
 	$(CC) $(CFLAGS) $(filter %.c %.s,$^) $(LIBS) -o $@
+	bash $(GUARD) $@ || { rm -f $@; exit 1; }
 
 # The file is rewritten only when a setting changes, so that alone rebuilds.
 $(OUT)/settings.h: FORCE

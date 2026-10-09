@@ -11,7 +11,7 @@ Prototype. The host CLI reads a Message Board dump and sends it. The Wii app rea
 
 ## Use
 
-1. On a Wii with the Homebrew Channel, run [cdbackup](https://oscwii.org/library/app/cdbackup). It writes `cdbackup.vff` to the SD card.
+1. On a Wii with the Homebrew Channel, run [cdbackup](https://oscwii.org/library/app/cdbackup) and choose Backup. It writes `cdbackup.vff` to the SD card. Do not choose Restore or Delete: both change the Message Board file on the console.
 2. Build the CLI: `make`.
 3. Check what it found:
 
@@ -31,6 +31,12 @@ The Wii stores local time without a time zone, so `--utc-offset` is the offset o
 
 For each session: the game code, the maker code, the title as the Wii Menu shows it, the start and end times, and an ID derived from the console.
 Messages, photos, Miis and friend names are never read.
+
+## Safety
+
+- The Wii app cannot write to the console's internal storage. The build replaces the one function that writes a file there, and fails if a binary contains a way around it.
+- It installs nothing on the console: no channel, no WAD, no IOS. It runs from the SD card.
+- It has never run on a real console. Dolphin does not show how a console handles permissions or timing.
 
 ## Limits
 
