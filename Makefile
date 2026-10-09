@@ -36,6 +36,8 @@ HOST ?= http://localhost:8010
 API_KEY ?=
 UTC_OFFSET ?= +00:00
 write_settings = printf 'host = %s\napi_key = %s\nutc_offset = %s\n' '$(HOST)' '$(API_KEY)' '$(UTC_OFFSET)' > $(1)
+# The random seed that an https send needs. mbedTLS reads 64 bytes of it. See wii/tls_config.h.
+write_seed = head -c 64 /dev/urandom > $(1)
 
 build/wii2posthog: host/main.c host/http.c $(CORE) $(HEADERS) host/http.h | build
 	$(CC) $(CFLAGS) $(filter %.c,$^) -lcurl -o $@
@@ -96,10 +98,12 @@ sd: wii $(SD)/icon.png
 	@test '$(origin HOST)' != file -a -n '$(API_KEY)' || { echo 'sd: pass HOST, API_KEY and UTC_OFFSET' >&2; exit 1; }
 	cp build/wii/boot.dol wii/meta.xml $(SD)/
 	$(call write_settings,$(SD)/settings.txt)
+	$(call write_seed,$(SD)/seed.bin)
 
 dolphin: wii $(DOLPHIN_BOARD)
 	mkdir -p $(dir $(DOLPHIN_SETTINGS))
 	$(call write_settings,$(DOLPHIN_SETTINGS))
+	$(call write_seed,$(dir $(DOLPHIN_SETTINGS))seed.bin)
 	$(DOLPHIN) -u $(DOLPHIN_USER) -C Dolphin.Analytics.PermissionAsked=True \
 		-C Dolphin.Core.WiiSDCardEnableFolderSync=True \
 		-C Graphics.Settings.InternalResolution=3 -e build/wii/boot.elf

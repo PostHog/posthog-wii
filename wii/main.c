@@ -87,8 +87,8 @@ static void sync(void) {
     /* A failed upload leaves the cursor alone, so the next run sends the
        same sessions again. PostHog drops the ones it already has. */
     if (delivered && state.batch.sent > 0) {
-        sdcard_write_cursor(cursor_text,
-                            cursor_write(cursor_text, config.host, config.api_key, state.latest.start_ticks));
+        sdcard_write(SDCARD_CURSOR_FILE, cursor_text,
+                     cursor_write(cursor_text, config.host, config.api_key, state.latest.start_ticks));
     }
 
     printf("Sessions found: %u\n", (unsigned)state.found);

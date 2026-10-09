@@ -102,6 +102,28 @@ int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t 
     return 0;
 }
 
+/* mbedTLS reads and replaces its seed file through the next two functions,
+   because of wii/tls_config.h. Each returns a negative number on failure. */
+
+static const char *seed_problem;
+
+static int read_seed(unsigned char *seed, size_t len) {
+    if (sdcard_read(SDCARD_SEED_FILE, seed, len) != len) {
+        seed_problem = "The SD card has no random seed for a secure connection.\n"
+                       "Run \"make sd\" and copy the folder to the card again.";
+        return -1;
+    }
+    return (int)len;
+}
+
+static int write_seed(unsigned char *seed, size_t len) {
+    if (!sdcard_write(SDCARD_SEED_FILE, seed, len)) {
+        seed_problem = "Could not save a new random seed to the SD card.";
+        return -1;
+    }
+    return (int)len;
+}
+
 static int send_bytes(void *ctx, const unsigned char *data, size_t len) {
     s32 sent = socket_send(*(s32 *)ctx, data, (s32)len);
     return sent < 0 ? MBEDTLS_ERR_SSL_INTERNAL_ERROR : (int)sent;
@@ -112,17 +134,20 @@ static int receive_bytes(void *ctx, unsigned char *data, size_t len) {
     return got < 0 ? MBEDTLS_ERR_SSL_INTERNAL_ERROR : (int)got;
 }
 
-/* Seeds the random number generator and loads the trusted roots, once. */
+/* Seeds the random number generator from the seed file and the readings,
+   and loads the trusted roots, once. */
 static bool prepare(void) {
     static bool prepared;
     if (prepared) {
         return true;
     }
     mbedtls_platform_set_time(utc_now);
+    mbedtls_platform_set_nv_seed(read_seed, write_seed);
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&random_bits);
     mbedtls_x509_crt_init(&roots);
     mbedtls_ssl_config_init(&config);
+    seed_problem = NULL;
     int result = mbedtls_ctr_drbg_seed(&random_bits, mbedtls_entropy_func, &entropy, NULL, 0);
     if (result == 0) {
         result = mbedtls_x509_crt_parse(&roots, (const unsigned char *)BUILT_IN_ROOTS, sizeof BUILT_IN_ROOTS);
@@ -132,7 +157,11 @@ static bool prepare(void) {
                                              MBEDTLS_SSL_PRESET_DEFAULT);
     }
     if (result != 0) {
-        fail("Could not set up the secure connection", result);
+        if (seed_problem) {
+            failure = seed_problem;
+        } else {
+            fail("Could not set up the secure connection", result);
+        }
         return false;
     }
 

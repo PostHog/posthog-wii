@@ -15,7 +15,8 @@ void tls_set_utc_offset(int minutes);
 /* Starts TLS on a connected socket. Returns true only when the server's
    certificate names host and chains to a trusted root. The trusted roots
    are wii/roots.pem and the owner's roots file on the SD card. The first
-   call takes about a second, which it spends on noise_read. */
+   call is slow. It reads and replaces the seed file on the SD card and
+   calls noise_read twice. Without a seed file it returns false. */
 bool tls_open(s32 socket, const char *host);
 
 /* A line of text that says why the last tls_open returned false. */

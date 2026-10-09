@@ -11,6 +11,12 @@
 #define MBEDTLS_NO_PLATFORM_ENTROPY
 #define MBEDTLS_ENTROPY_HARDWARE_ALT
 
+/* A Wii has no random number source, so mbedTLS also needs a seed file that
+   a computer made. mbedTLS replaces the file before it gives out a random
+   byte, and it fails without the file. tls.c reads and writes the file. */
+#define MBEDTLS_ENTROPY_NV_SEED
+#define MBEDTLS_PLATFORM_NV_SEED_ALT
+
 /* mbedTLS itself reads and writes no file. */
 #undef MBEDTLS_FS_IO
 #undef MBEDTLS_PSA_ITS_FILE_C

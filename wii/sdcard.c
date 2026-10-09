@@ -1,6 +1,5 @@
 #include "sdcard.h"
 
-#include <stdbool.h>
 #include <stdio.h>
 
 #include <fat.h>
@@ -24,14 +23,18 @@ static void unmount(void) {
     fatUnmount("sd:");
 }
 
-size_t sdcard_read(const char *file, char *out, size_t cap) {
+static FILE *open_file(const char *file, const char *mode) {
+    char path[FILENAME_MAX];
+    snprintf(path, sizeof path, "sd:/%s", file);
+    return fopen(path, mode);
+}
+
+size_t sdcard_read(const char *file, void *out, size_t cap) {
     if (!mount(false)) {
         return 0;
     }
     size_t len = 0;
-    char path[FILENAME_MAX];
-    snprintf(path, sizeof path, "sd:/%s", file);
-    FILE *stream = fopen(path, "rb");
+    FILE *stream = open_file(file, "rb");
     if (stream) {
         len = fread(out, 1, cap, stream);
         fclose(stream);
@@ -40,14 +43,17 @@ size_t sdcard_read(const char *file, char *out, size_t cap) {
     return len;
 }
 
-void sdcard_write_cursor(const char *text, size_t len) {
+bool sdcard_write(const char *file, const void *data, size_t len) {
     if (!mount(true)) {
-        return;
+        return false;
     }
-    FILE *stream = fopen("sd:/" SDCARD_CURSOR_FILE, "wb");
+    bool written = false;
+    FILE *stream = open_file(file, "wb");
     if (stream) {
-        fwrite(text, 1, len, stream);
-        fclose(stream);
+        written = fwrite(data, 1, len, stream) == len;
+        /* The close sends the last bytes to the card, so it can fail too. */
+        written = fclose(stream) == 0 && written;
     }
     unmount();
+    return written;
 }

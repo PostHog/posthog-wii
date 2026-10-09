@@ -18,8 +18,9 @@ typedef struct {
    after about a second and a half.
 
    A Wii gives an app no random number source, so the TLS keys come from
-   these readings. Without a Wii Remote that reports motion, only the clock
-   and the console's ID differ between runs. */
+   the seed file on the SD card and from these readings. Without a Wii
+   Remote that reports motion, only the clock and the console's ID differ
+   between two runs that start from the same seed file. */
 size_t noise_read(uint8_t *out, size_t cap);
 
 /* What the last noise_read saw. Both counts are 0 before the first call. */

@@ -9,8 +9,8 @@ Two front ends share one C core: a host CLI (`wii2posthog`) and a Wii homebrew a
 - `make test` builds and runs the tests under ASan and UBSan.
 - `build/wii2posthog samples/cdb.vff --dry-run` prints the request bodies without sending.
 - `make wii` cross-compiles the Wii app in Docker to `build/wii/boot.elf` and `boot.dol`, then runs `tools/nand_guard.sh` on the result. The first run downloads mbedTLS into `assets/` and checks its hash.
-- `make sd HOST=https://us.i.posthog.com API_KEY=phc_... UTC_OFFSET=-04:00` builds `build/sd/apps/posthog-wii/`, the folder that goes on an SD card: `boot.dol`, `meta.xml`, `icon.png` and `settings.txt`.
-- `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_... UTC_OFFSET=-04:00` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the three values to the settings file on Dolphin's SD card. Its NAND is seeded once from `samples/cdb.vff`.
+- `make sd HOST=https://us.i.posthog.com API_KEY=phc_... UTC_OFFSET=-04:00` builds `build/sd/apps/posthog-wii/`, the folder that goes on an SD card: `boot.dol`, `meta.xml`, `icon.png`, `settings.txt` and `seed.bin`.
+- `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_... UTC_OFFSET=-04:00` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the three values to the settings file on Dolphin's SD card, and a new seed file next to it. Its NAND is seeded once from `samples/cdb.vff`.
 - `make shots` builds `build/wii/debug.elf`, runs it in Dolphin, and saves its frames to `build/shots/`. Read those PNGs to check any drawing change. They are the raw 640-pixel display buffer, so on a 16:9 console the picture looks squeezed sideways.
 - `uv run tools/listener.py <dir>` is a local stand-in for PostHog capture. Point `HOST` at `http://127.0.0.1:18010` and read `<dir>/posts.log`.
 
@@ -43,7 +43,7 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `wii/tls.c` | mbedTLS. No other file includes an mbedTLS header |
 | `wii/tls_config.h` | The changes to mbedTLS's default configuration |
 | `wii/roots.pem` | The root certificates every build trusts: Amazon Root CA 1, which signs PostHog Cloud |
-| `wii/noise.c` | The readings that seed the TLS random number generator |
+| `wii/noise.c` | The readings that the TLS random number generator mixes with its seed file |
 | `wii/gfx.c` | GX. No other file draws |
 | `wii/play.c` | The game loop: Wii Remote input, the scenery and its colors, the score digits |
 | `wii/main.c` | The app's entry point: the text console and the sync flow |
@@ -96,8 +96,8 @@ A user's console must still start after any run of this software. This rule come
 - **A run in Dolphin shows only that drawing and logic work.** Dolphin grants every file access, skips IOS patches and reports the network as connected. Do not claim support for a console type (Wii, Wii mini, Wii U) before a run on that type.
 - **An `https://` connection always checks the certificate chain and the host name.** Never set `MBEDTLS_SSL_VERIFY_NONE` or `MBEDTLS_SSL_VERIFY_OPTIONAL`, and never add a setting that skips the check.
 - **A new mbedTLS version changes `MBEDTLS_VERSION` and `MBEDTLS_SHA256` together.** Take the hash from the release page, not from the download.
-- **The TLS keys are only as unpredictable as the readings in `wii/noise.c`.** A Wii gives an app no random number source. Add a source there. Do not remove one.
-- **The app writes one file, the cursor on the SD card.** `sdcard_write_cursor` is the only function that mounts the card for writing. A new file to write needs a reason as strong as the cursor's.
+- **The TLS keys start from the seed file that `make sd` writes on the computer.** A Wii gives an app no random number source. mbedTLS mixes the file with the readings in `wii/noise.c`, replaces the file before it gives out a random byte, and fails without it. Never make the seed optional, and never remove a source.
+- **The app writes two files, both on the SD card: the cursor and the random seed.** `sdcard_write` is the only function that mounts the card for writing. A new file to write needs a reason as strong as theirs.
 - **Dolphin loses SD card writes when it is killed.** Its window does not stop on a signal, so a second run cannot see what the first one wrote. Test a write and its read inside one run.
 - `samples/` and `*.vff` are never committed. A dump holds the owner's messages, photos and a console ID.
 - Committed fixtures are synthetic. Do not derive one from a real dump.
