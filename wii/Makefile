@@ -14,6 +14,8 @@ SHARED := readonly.c http.c socket.c tls.c noise.c sdcard.c gfx.c play.c ../game
 	$(GEN)/hedgehog_tpl.s
 HEADERS := $(wildcard *.h ../core/*.h ../game/*.h) $(GEN)/atlas.h roots.pem
 GUARD := ../tools/nand_guard.sh
+# A change to either guard file links and checks both binaries again.
+GUARD_FILES := $(GUARD) ../tools/ioctl_guard.py
 
 # mbedTLS has a mbedtls_config.h of its own, so the file here needs another name.
 TLS_FLAGS := -I$(MBEDTLS)/include -I. '-DMBEDTLS_USER_CONFIG_FILE="tls_config.h"'
@@ -29,12 +31,12 @@ $(OUT)/boot.dol: $(OUT)/boot.elf
 	elf2dol $< $@
 
 # The app syncs the play history, then runs the game.
-$(OUT)/boot.elf: main.c nand.c $(SHARED) $(TLS_LIB) $(HEADERS) $(GUARD) Makefile
+$(OUT)/boot.elf: main.c nand.c $(SHARED) $(TLS_LIB) $(HEADERS) $(GUARD_FILES) Makefile
 	$(CC) $(CFLAGS) $(filter %.c %.s %.a,$^) $(LIBS) -o $@
 	bash $(GUARD) $@ || { rm -f $@; exit 1; }
 
 # The debug build runs the game alone, playing by itself. See debug.c.
-$(OUT)/debug.elf: debug.c ../game/autoplay.c $(SHARED) $(TLS_LIB) $(HEADERS) $(GUARD) Makefile
+$(OUT)/debug.elf: debug.c ../game/autoplay.c $(SHARED) $(TLS_LIB) $(HEADERS) $(GUARD_FILES) Makefile
 	$(CC) $(CFLAGS) -DDEBUG_HOST='"$(DEBUG_HOST)"' $(filter %.c %.s %.a,$^) $(LIBS) -o $@
 	bash $(GUARD) $@ || { rm -f $@; exit 1; }
 

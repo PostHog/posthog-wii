@@ -27,6 +27,11 @@ for elf in "$@"; do
         echo "nand_guard: $elf contains" $found >&2
         failed=1
     fi
+    # The compiler folds one function into another, and a folded function has no name for the list above to match.
+    if ! powerpc-eabi-objdump -d "$elf" | python3 "$(dirname "$0")"/ioctl_guard.py; then
+        echo "nand_guard: $elf sends IOS an ioctl that tools/ioctl_guard.py does not list" >&2
+        failed=1
+    fi
 done
 
 exit $failed

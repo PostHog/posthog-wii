@@ -53,6 +53,7 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `tools/icon.py` | Makes the Homebrew Channel icon |
 | `tools/shots.sh`, `tools/listener.py` | The frame capture run behind `make shots` |
 | `tools/nand_guard.sh` | The build check that a Wii binary has no way to write the NAND |
+| `tools/ioctl_guard.py` | The ioctl numbers a Wii binary may send to IOS, and the part of the build check that reads them from the binary |
 | `tests/test_core.c` | A synthetic image builder and the core tests |
 | `tests/test_game.c` | The game tests |
 
@@ -89,13 +90,14 @@ These follow "A Philosophy of Software Design".
 
 A user's console must still start after any run of this software. This rule comes before any feature.
 
-- **No binary writes to the console's internal storage (the NAND).** libogc 2.13 writes it on its own. `WPAD_Init` and every exit save the Wii Remote list to `/shared2/sys/SYSCONF`, and a return to the Wii Menu writes `state.dat` and `NANDBOOTINFO`. `wii/readonly.c` replaces `IOS_Write` for the whole binary. `tools/nand_guard.sh` fails the build when a binary contains `IOS_Write`, or an ISFS or ES function that is not on its read-only list.
+- **No binary writes to the console's internal storage (the NAND).** libogc 2.13 writes it on its own. `WPAD_Init` and every exit save the Wii Remote list to `/shared2/sys/SYSCONF`, and a return to the Wii Menu writes `state.dat` and `NANDBOOTINFO`. `wii/readonly.c` replaces `IOS_Write` for the whole binary. `tools/nand_guard.sh` fails the build when a binary contains `IOS_Write`, contains an ISFS or ES function that is not on its read-only list, or sends IOS an ioctl that `tools/ioctl_guard.py` does not list.
 - **Only `wii/nand.c` opens a NAND file, and only with `ISFS_OPEN_READ`.** No file under `wii/` calls an `IOS_` function. The guard checks both.
-- **A change of `DEVKIT_IMAGE` needs a new read of libogc's write paths.** They are `libogc/conf.c`, `libogc/wiilaunch.c` and `wiiuse/wpad.c`. A write that goes through an ioctl passes the guard.
+- **A change of `DEVKIT_IMAGE` needs a new read of libogc's write paths.** They are `libogc/conf.c`, `libogc/wiilaunch.c` and `wiiuse/wpad.c`. A new ioctl fails the guard. Read what the ioctl does on its device before adding it to `tools/ioctl_guard.py`. The guard reads constants and follows no branch, so it does not replace the read.
 - **The project builds no WAD and installs nothing on the console.** The app runs from the SD card through the Homebrew Channel. A channel banner that the Wii Menu cannot parse stops the menu from starting. No tool proves a banner safe, and a banner that renders in Dolphin can still fail on a console.
 - **A run in Dolphin shows only that drawing and logic work.** Dolphin grants every file access, skips IOS patches and reports the network as connected. Do not claim support for a console type (Wii, Wii mini, Wii U) before a run on that type.
 - **An `https://` connection always checks the certificate chain and the host name.** Never set `MBEDTLS_SSL_VERIFY_NONE` or `MBEDTLS_SSL_VERIFY_OPTIONAL`, and never add a setting that skips the check.
 - **A new mbedTLS version changes `MBEDTLS_VERSION` and `MBEDTLS_SHA256` together.** Take the hash from the release page, not from the download.
+- **A new version of an npm package changes its version and its hash together, and a new `DEVKIT_IMAGE` tag changes its digest.** Take the hash from `dist.integrity` in the registry's answer for that version, and the digest from the registry that holds the image.
 - **The TLS keys start from the seed file that `make sd` writes on the computer.** A Wii gives an app no random number source. mbedTLS mixes the file with the readings in `wii/noise.c`, replaces the file before it gives out a random byte, and fails without it. Never make the seed optional, and never remove a source.
 - **The app writes two files, both on the SD card: the cursor and the random seed.** `sdcard_write` is the only function that mounts the card for writing. A new file to write needs a reason as strong as theirs.
 - **Dolphin loses SD card writes when it is killed.** Its window does not stop on a signal, so a second run cannot see what the first one wrote. Test a write and its read inside one run.
