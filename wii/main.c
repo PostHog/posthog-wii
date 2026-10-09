@@ -4,9 +4,11 @@
 #include <gccore.h>
 #include <wiiuse/wpad.h>
 
+#include "cursor.h"
 #include "events.h"
 #include "http.h"
 #include "nand.h"
+#include "noise.h"
 #include "play.h"
 #include "playlog.h"
 #include "sdcard.h"
@@ -15,12 +17,13 @@
 #include "tls.h"
 #include "upload.h"
 
-enum { CONSOLE_MARGIN = 20 };
+enum { CONSOLE_MARGIN = 20, SETTINGS_TEXT_CAP = 1024 };
 
 typedef struct {
     size_t found;
     playlog_session latest;
     bool sending;
+    uint64_t cursor;
     upload batch;
 } sync_state;
 
@@ -50,14 +53,15 @@ static void on_session(void *ctx, const playlog_session *session) {
     if (state->found++ == 0 || session->start_ticks > state->latest.start_ticks) {
         state->latest = *session;
     }
-    if (state->sending) {
+    if (state->sending && session->start_ticks > state->cursor) {
         upload_add(&state->batch, session);
     }
 }
 
 static void sync(void) {
     static settings config;
-    sdcard_read_settings(&config);
+    static char settings_text[SETTINGS_TEXT_CAP];
+    settings_parse(&config, settings_text, sdcard_read(SDCARD_SETTINGS_FILE, settings_text, sizeof settings_text));
     tls_set_utc_offset(config.utc_offset_minutes);
 
     size_t image_len = 0;
@@ -69,12 +73,21 @@ static void sync(void) {
 
     static sync_state state;
     state.sending = config.host[0] != '\0' && config.api_key[0] != '\0';
+    char cursor_text[CURSOR_TEXT_CAP];
+    state.cursor = cursor_read(cursor_text, sdcard_read(SDCARD_CURSOR_FILE, cursor_text, sizeof cursor_text),
+                               config.host, config.api_key);
     const events_config events = {.api_key = config.api_key, .utc_offset_minutes = config.utc_offset_minutes};
     upload_begin(&state.batch, &events, config.host, http_post);
     printf("Reading the play history on this console.\n\n");
     playlog_each_session(image, image_len, on_session, &state);
     bool delivered = upload_end(&state.batch);
     free(image);
+    /* A failed upload leaves the cursor alone, so the next run sends the
+       same sessions again. PostHog drops the ones it already has. */
+    if (delivered && state.batch.sent > 0) {
+        sdcard_write_cursor(cursor_text,
+                            cursor_write(cursor_text, config.host, config.api_key, state.latest.start_ticks));
+    }
 
     printf("Sessions found: %u\n", (unsigned)state.found);
     if (state.found > 0) {
@@ -86,8 +99,12 @@ static void sync(void) {
         printf("Nothing was sent. Add a host and a project token to\n" SDCARD_SETTINGS_FILE " on the SD card.\n");
         return;
     }
-    printf("Sessions sent:  %u\n", (unsigned)state.batch.sent);
+    printf("New ones sent:  %u\n", (unsigned)state.batch.sent);
     printf("Destination:    %s\n", config.host);
+    noise_report noise = noise_last();
+    if (noise.readings > 0) {
+        printf("Randomness:     %u of %u Wii Remote readings changed\n", noise.changed, noise.readings);
+    }
     if (state.batch.status == UPLOAD_NO_ANSWER) {
         printf("Could not reach the destination. For an https host, check that\nthe console's date is right.\n");
     } else if (state.batch.status == UPLOAD_NOT_CAPTURE) {

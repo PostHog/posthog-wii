@@ -50,6 +50,8 @@ utc_offset = -04:00
 - For an `https://` host the app checks the server's certificate. It trusts Amazon Root CA 1, which signs PostHog Cloud. For a host with another certificate authority, put that authority's root certificate, as PEM text, in `apps/posthog-wii/roots.pem`.
 - The certificate check needs the console's date to be right.
 
+Each run sends only the sessions that are newer than the last one it sent. The app keeps that mark in `apps/posthog-wii/sent.txt`, the one file it writes. Delete the file to send everything again.
+
 ## What is sent
 
 For each session: the game code, the maker code, the title as the Wii Menu shows it, the start and end times, and an ID derived from the console.

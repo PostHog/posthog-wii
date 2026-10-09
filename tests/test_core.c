@@ -5,6 +5,7 @@
 
 #include "bytes.h"
 #include "check.h"
+#include "cursor.h"
 #include "events.h"
 #include "playlog.h"
 #include "settings.h"
@@ -451,6 +452,16 @@ static void test_a_settings_value_that_cannot_be_used_changes_nothing(void) {
     CHECK(s.utc_offset_minutes == 60);
 }
 
+static void test_a_cursor_counts_only_for_its_own_host_and_token(void) {
+    char text[CURSOR_TEXT_CAP];
+    size_t len = cursor_write(text, "https://us.i.posthog.com", "phc_one", START);
+
+    CHECK(cursor_read(text, len, "https://us.i.posthog.com", "phc_one") == START);
+    CHECK(cursor_read(text, len, "https://us.i.posthog.com", "phc_two") == 0);
+    CHECK(cursor_read(text, len, "https://eu.i.posthog.com", "phc_one") == 0);
+    CHECK(cursor_read(text, len / 2, "https://us.i.posthog.com", "phc_one") == 0);
+}
+
 static void test_sha1_matches_the_standard_vector(void) {
     static const uint8_t expected[SHA1_SIZE] = {0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e,
                                                0x25, 0x71, 0x78, 0x50, 0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d};
@@ -470,6 +481,7 @@ int main(void) {
     test_summarizes_a_session();
     test_reads_a_settings_file_saved_by_a_text_editor();
     test_a_settings_value_that_cannot_be_used_changes_nothing();
+    test_a_cursor_counts_only_for_its_own_host_and_token();
     test_sha1_matches_the_standard_vector();
     return report();
 }

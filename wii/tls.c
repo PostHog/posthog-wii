@@ -108,7 +108,7 @@ static bool prepare(void) {
     }
 
     static char extra_roots[EXTRA_ROOTS_CAP];
-    size_t extra_len = sdcard_read_roots(extra_roots, sizeof extra_roots - 1);
+    size_t extra_len = sdcard_read(SDCARD_ROOTS_FILE, extra_roots, sizeof extra_roots - 1);
     if (extra_len > 0) {
         extra_roots[extra_len] = '\0';
         /* A certificate that does not parse is left out. The others still load. */

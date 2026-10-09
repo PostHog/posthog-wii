@@ -30,13 +30,14 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `core/upload.c` | The request path, how many sessions a request carries, what answer counts as accepted, and stopping at the first failure |
 | `core/summary.c` | The one-line text form of a session that both front ends print |
 | `core/settings.c` | The settings file format and the notation for a UTC offset |
+| `core/cursor.c` | The cursor file format, and which host and token a cursor counts for |
 | `host/http.c` | libcurl. No other file includes `curl.h` |
 | `host/main.c` | Arguments, file reading and output for the CLI |
 | `game/runner.c` | The endless runner: Max's jump, the track, collisions and the score. Portable, no drawing |
 | `game/autoplay.c` | A player that clears every fire, for the tests and the debug build |
 | `wii/nand.c` | ISFS. No other file reads the NAND |
 | `wii/readonly.c` | The replacement for `IOS_Write`, linked into every Wii binary |
-| `wii/sdcard.c` | libfat. No other file reads the SD card, and the card is mounted read-only |
+| `wii/sdcard.c` | libfat. No other file touches the SD card. A read mounts the card read-only |
 | `wii/socket.c` | libogc sockets. No other file calls a `net_` function. Every wait for the other side has a limit |
 | `wii/http.c` | The HTTP request and response, and the choice between plain and TLS from the host's scheme |
 | `wii/tls.c` | mbedTLS. No other file includes an mbedTLS header |
@@ -96,6 +97,8 @@ A user's console must still start after any run of this software. This rule come
 - **An `https://` connection always checks the certificate chain and the host name.** Never set `MBEDTLS_SSL_VERIFY_NONE` or `MBEDTLS_SSL_VERIFY_OPTIONAL`, and never add a setting that skips the check.
 - **A new mbedTLS version changes `MBEDTLS_VERSION` and `MBEDTLS_SHA256` together.** Take the hash from the release page, not from the download.
 - **The TLS keys are only as unpredictable as the readings in `wii/noise.c`.** A Wii gives an app no random number source. Add a source there. Do not remove one.
+- **The app writes one file, the cursor on the SD card.** `sdcard_write_cursor` is the only function that mounts the card for writing. A new file to write needs a reason as strong as the cursor's.
+- **Dolphin loses SD card writes when it is killed.** Its window does not stop on a signal, so a second run cannot see what the first one wrote. Test a write and its read inside one run.
 - `samples/` and `*.vff` are never committed. A dump holds the owner's messages, photos and a console ID.
 - Committed fixtures are synthetic. Do not derive one from a real dump.
 - `playlog.c` never parses the sent-message buffer that follows the sessions. It holds friend names.
