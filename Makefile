@@ -93,7 +93,7 @@ wii: build/gen/atlas.png | $(MBEDTLS)
 
 # A console cannot reach the default HOST, which is this computer's own address.
 sd: wii $(SD)/icon.png
-	@test -n '$(API_KEY)' || { echo 'sd: pass HOST, API_KEY and UTC_OFFSET' >&2; exit 1; }
+	@test '$(origin HOST)' != file -a -n '$(API_KEY)' || { echo 'sd: pass HOST, API_KEY and UTC_OFFSET' >&2; exit 1; }
 	cp build/wii/boot.dol wii/meta.xml $(SD)/
 	$(call write_settings,$(SD)/settings.txt)
 
