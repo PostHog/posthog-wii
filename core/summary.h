@@ -3,7 +3,7 @@
 
 #include "playlog.h"
 
-enum { SESSION_SUMMARY_CAP = 256 };
+enum { SESSION_SUMMARY_CAP = PLAYLOG_TITLE_CAP + 128 };
 
 /* Writes the start in console local time, the duration as H:MM:SS, the game
    code and the title, on one line. */

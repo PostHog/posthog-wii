@@ -10,8 +10,9 @@ typedef struct {
     int utc_offset_minutes; /* console local time minus UTC */
 } events_config;
 
-/* Enough for the body of session_count sessions. */
-#define EVENTS_JSON_CAP(session_count) ((size_t)(session_count) * 2560 + 256)
+/* Enough for the body of session_count sessions. A session is two events,
+   and each byte of a title takes up to six bytes as a JSON escape. */
+#define EVENTS_JSON_CAP(session_count) ((size_t)(session_count) * 2 * (6 * PLAYLOG_TITLE_CAP + 512) + 256)
 
 /* Writes the body of a PostHog /batch request, with a "game started" and a
    "game ended" event per session. Returns the body length, or 0 when out_cap
