@@ -15,6 +15,8 @@ Two front ends share one C core: a host CLI (`wii2posthog`) and a Wii homebrew a
 
 Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. A `-C` override with an unknown name is ignored without an error.
 
+A local PostHog dev stack has two capture addresses. The proxy on port 8010 listens on loopback only and routes only the host name `localhost`: for any other name, an IP address included, it answers 200 with an empty body and drops the request. Capture itself listens on port 3307 on every interface and answers `{"status":"Ok"}`, so a console on the network uses `http://<computer address>:3307`.
+
 ## Layout
 
 | Path | Owns |

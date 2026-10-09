@@ -33,7 +33,7 @@ The Wii stores local time without a time zone, so `--utc-offset` is the offset o
 The Wii app reads `apps/posthog-wii/settings.txt` from the SD card:
 
 ```
-host = http://192.168.1.20:8010
+host = http://192.168.1.20:3307
 api_key = phc_...
 utc_offset = -04:00
 ```

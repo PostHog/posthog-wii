@@ -23,7 +23,7 @@ DOLPHIN_SETTINGS := $(DOLPHIN_USER)/Load/WiiSDSync/apps/posthog-wii/settings.txt
 SHOTS_PORT := 18010
 
 # What "make dolphin" writes to the settings file on Dolphin's SD card.
-HOST ?= http://127.0.0.1:8010
+HOST ?= http://localhost:8010
 API_KEY ?=
 UTC_OFFSET ?= +00:00
 
