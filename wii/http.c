@@ -18,6 +18,8 @@ typedef struct {
     bool secure;
 } connection;
 
+static const char *failure = "";
+
 static bool write_all(const connection *link, const char *data, size_t len) {
     for (size_t sent = 0; sent < len;) {
         int piece = (int)(len - sent);
@@ -50,6 +52,7 @@ long http_post(const char *host, const char *path, const char *content_type, con
     if (answer_cap > 0) {
         answer[0] = '\0';
     }
+    failure = "The host in the settings file must start with http:// or\nhttps://.";
     char scheme[SCHEME_CAP];
     char name[NAME_CAP];
     unsigned port = 0;
@@ -78,10 +81,14 @@ long http_post(const char *host, const char *path, const char *content_type, con
 
     link.socket = socket_open(name, port);
     if (link.socket < 0) {
+        failure = socket_failure();
         return 0;
     }
     long status = 0;
-    if (!link.secure || tls_open(link.socket, name)) {
+    failure = "The host did not answer.";
+    if (link.secure && !tls_open(link.socket, name)) {
+        failure = tls_failure();
+    } else {
         char response[RESPONSE_CAP] = "";
         if (write_all(&link, header, (size_t)header_len) && write_all(&link, body, body_len)) {
             read_response(&link, response);
@@ -97,4 +104,8 @@ long http_post(const char *host, const char *path, const char *content_type, con
     }
     socket_close(link.socket);
     return status;
+}
+
+const char *http_failure(void) {
+    return failure;
 }

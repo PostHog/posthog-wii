@@ -18,6 +18,9 @@ void tls_set_utc_offset(int minutes);
    call takes about a second, which it spends on noise_read. */
 bool tls_open(s32 socket, const char *host);
 
+/* A line of text that says why the last tls_open returned false. */
+const char *tls_failure(void);
+
 /* Both return the number of bytes moved, 0 when the server closed the
    connection, or a negative number on failure. */
 int tls_send(const void *data, int len);

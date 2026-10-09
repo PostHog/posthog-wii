@@ -10,6 +10,9 @@ enum { SOCKET_WAIT_MS = 15000 };
    network is down, the name does not resolve or the host does not accept. */
 s32 socket_open(const char *name, unsigned port);
 
+/* A line of text that says why the last socket_open failed. */
+const char *socket_failure(void);
+
 /* Both return the number of bytes moved, 0 when the other side closed the
    connection, or a negative number on failure. A send can move fewer bytes
    than len. */

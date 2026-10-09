@@ -11,4 +11,7 @@
 long http_post(const char *host, const char *path, const char *content_type, const void *body, size_t body_len,
                char *answer, size_t answer_cap);
 
+/* A line of text that says why the last http_post returned 0. */
+const char *http_failure(void);
+
 #endif

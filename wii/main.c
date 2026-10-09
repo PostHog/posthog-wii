@@ -64,10 +64,13 @@ static void sync(void) {
     settings_parse(&config, settings_text, sdcard_read(SDCARD_SETTINGS_FILE, settings_text, sizeof settings_text));
     tls_set_utc_offset(config.utc_offset_minutes);
 
+    /* The read takes long enough on a console that a screen with no line
+       about it looks stuck. */
+    printf("Reading the play history on this console.\n\n");
     size_t image_len = 0;
     uint8_t *image = nand_read_message_board(&image_len);
     if (!image) {
-        printf("Could not read the Message Board data.\n");
+        printf("%s\n", nand_failure());
         return;
     }
 
@@ -78,7 +81,6 @@ static void sync(void) {
                                config.host, config.api_key);
     const events_config events = {.api_key = config.api_key, .utc_offset_minutes = config.utc_offset_minutes};
     upload_begin(&state.batch, &events, config.host, http_post);
-    printf("Reading the play history on this console.\n\n");
     playlog_each_session(image, image_len, on_session, &state);
     bool delivered = upload_end(&state.batch);
     free(image);
@@ -106,7 +108,7 @@ static void sync(void) {
         printf("Randomness:     %u of %u Wii Remote readings changed\n", noise.changed, noise.readings);
     }
     if (state.batch.status == UPLOAD_NO_ANSWER) {
-        printf("Could not reach the destination. For an https host, check that\nthe console's date is right.\n");
+        printf("%s\n", http_failure());
     } else if (state.batch.status == UPLOAD_NOT_CAPTURE) {
         printf("The host answered, but not as PostHog does. Check the host in\nthe settings file.\n");
     } else if (!delivered) {

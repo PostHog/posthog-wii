@@ -1,5 +1,6 @@
 #include "tls.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -17,7 +18,7 @@
 #include "sdcard.h"
 #include "socket.h"
 
-enum { DIGEST_SIZE = 32, EXTRA_ROOTS_CAP = 16384 };
+enum { DIGEST_SIZE = 32, EXTRA_ROOTS_CAP = 16384, FAILURE_CAP = 64 };
 
 /* PEM text must end in a zero byte for mbedTLS to read it. */
 static const char BUILT_IN_ROOTS[] = {
@@ -42,6 +43,28 @@ static mbedtls_ssl_config config;
 static mbedtls_ssl_context session;
 static s32 session_socket;
 static int utc_offset_minutes;
+static const char *failure = "";
+
+/* mbedTLS documents its error codes as negative hexadecimal numbers. */
+static void fail(const char *what, int error) {
+    static char text[FAILURE_CAP];
+    snprintf(text, sizeof text, "%s (error -0x%04X).", what, (unsigned)-error);
+    failure = text;
+}
+
+static void fail_handshake(int error) {
+    /* The flags hold a result only after the certificate check has run. */
+    uint32_t flags = error == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED ? mbedtls_ssl_get_verify_result(&session) : 0;
+    if (flags & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE)) {
+        failure = "The host's certificate is not valid on the console's date.\nCheck the date in the Wii settings.";
+    } else if (flags & MBEDTLS_X509_BADCERT_CN_MISMATCH) {
+        failure = "The host's certificate names another host.";
+    } else if (flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED) {
+        failure = "The host's certificate comes from an authority that the app\ndoes not trust.";
+    } else {
+        fail("The secure connection failed", error);
+    }
+}
 
 void tls_set_utc_offset(int minutes) {
     utc_offset_minutes = minutes;
@@ -100,10 +123,16 @@ static bool prepare(void) {
     mbedtls_ctr_drbg_init(&random_bits);
     mbedtls_x509_crt_init(&roots);
     mbedtls_ssl_config_init(&config);
-    if (mbedtls_ctr_drbg_seed(&random_bits, mbedtls_entropy_func, &entropy, NULL, 0) != 0 ||
-        mbedtls_x509_crt_parse(&roots, (const unsigned char *)BUILT_IN_ROOTS, sizeof BUILT_IN_ROOTS) != 0 ||
-        mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
-                                    MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
+    int result = mbedtls_ctr_drbg_seed(&random_bits, mbedtls_entropy_func, &entropy, NULL, 0);
+    if (result == 0) {
+        result = mbedtls_x509_crt_parse(&roots, (const unsigned char *)BUILT_IN_ROOTS, sizeof BUILT_IN_ROOTS);
+    }
+    if (result == 0) {
+        result = mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
+                                             MBEDTLS_SSL_PRESET_DEFAULT);
+    }
+    if (result != 0) {
+        fail("Could not set up the secure connection", result);
         return false;
     }
 
@@ -129,14 +158,24 @@ bool tls_open(s32 socket, const char *host) {
     }
     session_socket = socket;
     mbedtls_ssl_init(&session);
-    if (mbedtls_ssl_setup(&session, &config) == 0 && mbedtls_ssl_set_hostname(&session, host) == 0) {
-        mbedtls_ssl_set_bio(&session, &session_socket, send_bytes, receive_bytes, NULL);
-        if (mbedtls_ssl_handshake(&session) == 0) {
-            return true;
-        }
+    int result = mbedtls_ssl_setup(&session, &config);
+    if (result == 0) {
+        result = mbedtls_ssl_set_hostname(&session, host);
     }
+    if (result == 0) {
+        mbedtls_ssl_set_bio(&session, &session_socket, send_bytes, receive_bytes, NULL);
+        result = mbedtls_ssl_handshake(&session);
+    }
+    if (result == 0) {
+        return true;
+    }
+    fail_handshake(result);
     mbedtls_ssl_free(&session);
     return false;
+}
+
+const char *tls_failure(void) {
+    return failure;
 }
 
 int tls_send(const void *data, int len) {
