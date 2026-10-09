@@ -41,7 +41,7 @@ enum {
     FAR_SCROLL_DIVISOR = 8,
 
     /* Distances are pixels of track. Hogzilla enters once per lap. */
-    HOGZILLA_SCALE = 4,
+    HOGZILLA_SCALE = 3,
     HOGZILLA_LAP = 20000,
     HOGZILLA_ENTERS_AT = 4000,
     HOGZILLA_SCROLL_DIVISOR = 6,
@@ -175,8 +175,8 @@ static unsigned item_frame(const runner_item *item, unsigned tick) {
 static void draw(const runner *game, float width, unsigned tick) {
     gfx_rect(0, 0, width, GFX_HEIGHT, COLOR_PAGE);
     draw_columns(game, width, FAR_SCROLL_DIVISOR, FAR_PITCH, far_column);
-    draw_hogzilla(game, width, tick);
     draw_columns(game, width, BAR_SCROLL_DIVISOR, BAR_PITCH, near_column);
+    draw_hogzilla(game, width, tick);
     draw_ground(game, width);
     for (size_t i = 0; i < game->item_count; i++) {
         gfx_frame(game->items[i].x, game->items[i].y, item_frame(&game->items[i], tick), 1);
