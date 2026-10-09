@@ -1,4 +1,3 @@
-#include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +6,7 @@
 #include "events.h"
 #include "http.h"
 #include "playlog.h"
+#include "settings.h"
 #include "summary.h"
 #include "upload.h"
 
@@ -30,21 +30,6 @@ static void usage(void) {
           stderr);
 }
 
-/* Accepts exactly a sign, two digits, a colon and two digits. */
-static bool parse_utc_offset(const char *text, int *minutes) {
-    if (strlen(text) != 6 || (text[0] != '+' && text[0] != '-') || text[3] != ':' || !isdigit((unsigned char)text[1]) ||
-        !isdigit((unsigned char)text[2]) || !isdigit((unsigned char)text[4]) || !isdigit((unsigned char)text[5])) {
-        return false;
-    }
-    int hours = (text[1] - '0') * 10 + (text[2] - '0');
-    int mins = (text[4] - '0') * 10 + (text[5] - '0');
-    if (hours > 14 || mins > 59) {
-        return false;
-    }
-    *minutes = (text[0] == '-' ? -1 : 1) * (hours * 60 + mins);
-    return true;
-}
-
 static bool parse_options(int argc, char **argv, options *opts) {
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -57,7 +42,8 @@ static bool parse_options(int argc, char **argv, options *opts) {
         } else if (strcmp(arg, "--api-key") == 0 && value) {
             opts->api_key = value;
             i++;
-        } else if (strcmp(arg, "--utc-offset") == 0 && value && parse_utc_offset(value, &opts->utc_offset_minutes)) {
+        } else if (strcmp(arg, "--utc-offset") == 0 && value &&
+                   settings_utc_offset(value, strlen(value), &opts->utc_offset_minutes)) {
             i++;
         } else if (arg[0] != '-' && !opts->path) {
             opts->path = arg;

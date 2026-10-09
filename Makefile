@@ -7,7 +7,6 @@ HEADERS := $(wildcard core/*.h game/*.h tests/*.h)
 # libogc 3 does not link with the wii-curl packages, so the toolchain image is pinned.
 DEVKIT_IMAGE := devkitpro/devkitppc:20251231
 DEVKIT := docker run --rm -v "$(CURDIR)":/src -w /src/wii $(DEVKIT_IMAGE) make
-WII_SETTINGS := $(foreach name,HOST API_KEY UTC_OFFSET_MINUTES,$(if $($(name)),$(name)="$($(name))"))
 
 # The pictures come from PostHog's own npm packages. They are fetched, not
 # committed: see the Brand section of CLAUDE.md.
@@ -19,7 +18,14 @@ CRESTS := assets/brand/crests
 DOLPHIN := /Applications/Dolphin.app/Contents/MacOS/Dolphin
 DOLPHIN_USER := $(CURDIR)/.dolphin
 DOLPHIN_BOARD := $(DOLPHIN_USER)/Wii/title/00000001/00000002/data/cdb.vff
+# Dolphin packs this folder into its SD card when a run starts.
+DOLPHIN_SETTINGS := $(DOLPHIN_USER)/Load/WiiSDSync/apps/posthog-wii/settings.txt
 SHOTS_PORT := 18010
+
+# What "make dolphin" writes to the settings file on Dolphin's SD card.
+HOST ?= http://127.0.0.1:8010
+API_KEY ?=
+UTC_OFFSET ?= +00:00
 
 build/wii2posthog: host/main.c host/http.c $(CORE) $(HEADERS) host/http.h | build
 	$(CC) $(CFLAGS) $(filter %.c,$^) -lcurl -o $@
@@ -57,10 +63,13 @@ test: build/test_core build/test_game
 	./build/test_game
 
 wii: build/gen/atlas.png
-	$(DEVKIT) $(WII_SETTINGS)
+	$(DEVKIT)
 
 dolphin: wii $(DOLPHIN_BOARD)
+	mkdir -p $(dir $(DOLPHIN_SETTINGS))
+	printf 'host = %s\napi_key = %s\nutc_offset = %s\n' '$(HOST)' '$(API_KEY)' '$(UTC_OFFSET)' > $(DOLPHIN_SETTINGS)
 	$(DOLPHIN) -u $(DOLPHIN_USER) -C Dolphin.Analytics.PermissionAsked=True \
+		-C Dolphin.Core.WiiSDCardEnableFolderSync=True \
 		-C Graphics.Settings.InternalResolution=3 -e build/wii/boot.elf
 
 shots: build/gen/atlas.png

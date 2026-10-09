@@ -9,6 +9,7 @@
 #include "nand.h"
 #include "play.h"
 #include "playlog.h"
+#include "sdcard.h"
 #include "settings.h"
 #include "summary.h"
 #include "upload.h"
@@ -18,17 +19,9 @@ enum { CONSOLE_MARGIN = 20 };
 typedef struct {
     size_t found;
     playlog_session latest;
+    bool sending;
     upload batch;
 } sync_state;
-
-static const events_config CONFIG = {
-    .api_key = POSTHOG_API_KEY,
-    .utc_offset_minutes = UTC_OFFSET_MINUTES,
-};
-
-static bool has_token(void) {
-    return CONFIG.api_key[0] != '\0';
-}
 
 static void init_console(void) {
     VIDEO_Init();
@@ -56,12 +49,15 @@ static void on_session(void *ctx, const playlog_session *session) {
     if (state->found++ == 0 || session->start_ticks > state->latest.start_ticks) {
         state->latest = *session;
     }
-    if (has_token()) {
+    if (state->sending) {
         upload_add(&state->batch, session);
     }
 }
 
 static void sync(void) {
+    static settings config;
+    sdcard_read_settings(&config);
+
     size_t image_len = 0;
     uint8_t *image = nand_read_message_board(&image_len);
     if (!image) {
@@ -70,7 +66,9 @@ static void sync(void) {
     }
 
     static sync_state state;
-    upload_begin(&state.batch, &CONFIG, POSTHOG_HOST, http_post);
+    state.sending = config.host[0] != '\0' && config.api_key[0] != '\0';
+    const events_config events = {.api_key = config.api_key, .utc_offset_minutes = config.utc_offset_minutes};
+    upload_begin(&state.batch, &events, config.host, http_post);
     printf("Reading the play history on this console.\n\n");
     playlog_each_session(image, image_len, on_session, &state);
     bool delivered = upload_end(&state.batch);
@@ -82,12 +80,12 @@ static void sync(void) {
         session_summary(&state.latest, line);
         printf("Latest session: %s\n", line);
     }
-    if (!has_token()) {
-        printf("No project token is set, so nothing was sent.\n");
+    if (!state.sending) {
+        printf("Nothing was sent. Add a host and a project token to\n" SDCARD_SETTINGS_FILE " on the SD card.\n");
         return;
     }
     printf("Sessions sent:  %u\n", (unsigned)state.batch.sent);
-    printf("Destination:    %s\n", POSTHOG_HOST);
+    printf("Destination:    %s\n", config.host);
     if (!delivered && state.batch.status == 0) {
         printf("The destination did not answer. Run the app again to retry.\n");
     } else if (!delivered) {

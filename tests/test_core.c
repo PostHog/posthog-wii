@@ -7,6 +7,7 @@
 #include "check.h"
 #include "events.h"
 #include "playlog.h"
+#include "settings.h"
 #include "sha1.h"
 #include "summary.h"
 #include "ticks.h"
@@ -415,6 +416,30 @@ static void test_summarizes_a_session(void) {
     CHECK(strcmp(line, "2022-11-15 21:44:24  1:01:01  HAAA  Photo Channel") == 0);
 }
 
+static void test_reads_a_settings_file_saved_by_a_text_editor(void) {
+    static const char text[] = "\xEF\xBB\xBFhost = http://192.168.1.20:8010/\r\n"
+                               "# my project\r\n"
+                               "api_key=phc_abc\r\n"
+                               "color = red\r\n"
+                               "utc_offset = -04:00";
+    settings s = {0};
+    settings_parse(&s, text, sizeof text - 1);
+
+    CHECK(strcmp(s.host, "http://192.168.1.20:8010") == 0);
+    CHECK(strcmp(s.api_key, "phc_abc") == 0);
+    CHECK(s.utc_offset_minutes == -240);
+}
+
+static void test_a_settings_value_that_cannot_be_used_changes_nothing(void) {
+    char text[SETTINGS_VALUE_CAP * 2];
+    int len = snprintf(text, sizeof text, "utc_offset = 4\napi_key = %0*d\n", SETTINGS_VALUE_CAP, 0);
+    settings s = {.api_key = "phc_abc", .utc_offset_minutes = 60};
+    settings_parse(&s, text, (size_t)len);
+
+    CHECK(strcmp(s.api_key, "phc_abc") == 0);
+    CHECK(s.utc_offset_minutes == 60);
+}
+
 static void test_sha1_matches_the_standard_vector(void) {
     static const uint8_t expected[SHA1_SIZE] = {0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e,
                                                0x25, 0x71, 0x78, 0x50, 0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d};
@@ -432,6 +457,8 @@ int main(void) {
     test_uploads_in_requests_and_stops_at_the_first_failure();
     test_a_full_request_of_the_longest_sessions_fits_its_buffer();
     test_summarizes_a_session();
+    test_reads_a_settings_file_saved_by_a_text_editor();
+    test_a_settings_value_that_cannot_be_used_changes_nothing();
     test_sha1_matches_the_standard_vector();
     return report();
 }

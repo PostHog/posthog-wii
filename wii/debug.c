@@ -8,7 +8,6 @@
 #include "gfx.h"
 #include "http.h"
 #include "play.h"
-#include "settings.h"
 
 /* The entry point of the debug build. The game plays by itself on a fixed
    track and posts what it showed to DEBUG_HOST, because nothing else can
