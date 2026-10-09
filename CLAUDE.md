@@ -122,7 +122,7 @@ Sources: WiiBrew (`Brick`, `/dev/fs`, `/dev/es`, `Hardware/NAND`), HackMii, wii.
 ## Provenance
 
 - Format facts come from WiiBrew, the Riiwind parser (MIT) and the System Menu decompilation. Reimplement the facts. Never copy code from the decompilation, from leaked SDK material, or from a repository without a license (`cdbackup`, `WiiVFF`).
-- The play log layout was checked against a real dump from system menu 4.3. The older layout without the `03_0` magic comes from the decompilation only.
+- The play log layout was checked against a real dump from system menu 4.3.
 
 ## Brand
 

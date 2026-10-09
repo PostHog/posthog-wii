@@ -27,7 +27,6 @@ enum {
     CDBFILE_SIZE = 0x400,
     ATTACHMENT_OFFSET = 0x220,
     ATTACHMENT_SIZE = 0x668,
-    ATTACHMENT_SIZE_WITHOUT_HEADER = 0x558,
     LOG_SIZE = CDBFILE_SIZE + ATTACHMENT_OFFSET + ATTACHMENT_SIZE,
     LOG_CLUSTERS = 7,
     ENTRY_SIZE = 0x88,
@@ -97,7 +96,7 @@ static void put_entry(uint8_t *entry, entry_spec spec) {
     memcpy(entry + 0x74, "01", 2);
 }
 
-static void build_log(uint8_t log[LOG_SIZE], bool with_header, const entry_spec *entries, int count) {
+static void build_log(uint8_t log[LOG_SIZE], const entry_spec *entries, int count) {
     memset(log, 0, LOG_SIZE);
     memcpy(log, "CDBFILE\x02", 8);
     put_be(log + 0x08, CONSOLE_ID, 8);
@@ -107,13 +106,11 @@ static void build_log(uint8_t log[LOG_SIZE], bool with_header, const entry_spec 
     put_be(record, 0x52495F35, 4);
     put_be(record + 0x128, 3, 4);
     put_be(record + 0x12C, ATTACHMENT_OFFSET, 4);
-    put_be(record + 0x130, with_header ? ATTACHMENT_SIZE : ATTACHMENT_SIZE_WITHOUT_HEADER, 4);
+    put_be(record + 0x130, ATTACHMENT_SIZE, 4);
 
     uint8_t *attachment = record + ATTACHMENT_OFFSET;
-    if (with_header) {
-        put_be(attachment, 0x30335F30, 4);
-        attachment += 8;
-    }
+    put_be(attachment, 0x30335F30, 4);
+    attachment += 8;
     for (int i = 0; i < count; i++) {
         put_entry(attachment + i * ENTRY_SIZE, entries[i]);
     }
@@ -194,9 +191,9 @@ static collected sessions_in(const uint8_t *image, size_t len) {
     return found;
 }
 
-static collected sessions_in_log(bool with_header, const entry_spec *entries, int count) {
+static collected sessions_in_log(const entry_spec *entries, int count) {
     uint8_t log[LOG_SIZE];
-    build_log(log, with_header, entries, count);
+    build_log(log, entries, count);
     uint8_t *image = build_image(log);
     collected found = sessions_in(image, IMAGE_SIZE);
     free(image);
@@ -209,7 +206,7 @@ static void test_reads_sessions_from_a_fragmented_image(void) {
         {"RZDE", MARIO_KART, NULL, START, START + SECOND, false},
         {"RSBJ", SUMABURA, X, START + 6000 * SECOND, START + 6060 * SECOND, true},
     };
-    collected found = sessions_in_log(true, entries, 3);
+    collected found = sessions_in_log(entries, 3);
 
     CHECK(found.count == 2);
     CHECK(found.items[0].console_id == CONSOLE_ID);
@@ -222,14 +219,6 @@ static void test_reads_sessions_from_a_fragmented_image(void) {
     CHECK(strcmp(found.items[1].title, "\xE3\x82\xB9\xE3\x83\x9E\xE3\x83\x96\xE3\x83\xA9 X") == 0);
 }
 
-static void test_reads_the_layout_without_a_header(void) {
-    const entry_spec entries[] = {{"RMCE", MARIO_KART, NULL, START, START + SECOND, true}};
-    collected found = sessions_in_log(false, entries, 1);
-
-    CHECK(found.count == 1);
-    CHECK(strcmp(found.items[0].game_code, "RMCE") == 0);
-}
-
 static void test_skips_entries_that_cannot_be_sessions(void) {
     const entry_spec entries[] = {
         {"RMCE", MARIO_KART, NULL, START + SECOND, START, true},
@@ -237,7 +226,7 @@ static void test_skips_entries_that_cannot_be_sessions(void) {
         {"\x01\x02\x03\x04", MARIO_KART, NULL, START, START + SECOND, true},
         {"RSBJ", SUMABURA, NULL, START, START + SECOND, true},
     };
-    collected found = sessions_in_log(true, entries, 4);
+    collected found = sessions_in_log(entries, 4);
 
     CHECK(found.count == 1);
     CHECK(strcmp(found.items[0].game_code, "RSBJ") == 0);
@@ -246,7 +235,7 @@ static void test_skips_entries_that_cannot_be_sessions(void) {
 static void test_survives_damaged_images(void) {
     const entry_spec entries[] = {{"RMCE", MARIO_KART, NULL, START, START + SECOND, true}};
     uint8_t log[LOG_SIZE];
-    build_log(log, true, entries, 1);
+    build_log(log, entries, 1);
     uint8_t *image = build_image(log);
 
     const size_t truncated_lengths[] = {
@@ -472,7 +461,6 @@ static void test_sha1_matches_the_standard_vector(void) {
 
 int main(void) {
     test_reads_sessions_from_a_fragmented_image();
-    test_reads_the_layout_without_a_header();
     test_skips_entries_that_cannot_be_sessions();
     test_survives_damaged_images();
     test_builds_the_batch_body();

@@ -29,9 +29,6 @@ enum {
 
     LOG_MAGIC = 0x30335F30, /* "03_0" */
     LOG_HEADER_SIZE = 8,
-    /* System menus before the sent-message log wrote the entries with no
-       magic in front. The attachment size identifies that layout. */
-    LOG_SIZE_WITHOUT_HEADER = 0x558,
 
     ENTRY_COUNT = 10,
     ENTRY_SIZE = 0x88,
@@ -148,9 +145,6 @@ static bytes log_entries(bytes file) {
         return (bytes){0};
     }
     bytes log = bytes_at(record, be32_at(record, RECORD_ATTACHMENT_OFFSET), be32_at(record, RECORD_ATTACHMENT_SIZE));
-    if (log.len == LOG_SIZE_WITHOUT_HEADER) {
-        return bytes_at(log, 0, ENTRY_COUNT * ENTRY_SIZE);
-    }
     if (be32_at(log, 0) != LOG_MAGIC) {
         return (bytes){0};
     }
