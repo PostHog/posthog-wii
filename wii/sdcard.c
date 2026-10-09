@@ -24,7 +24,9 @@ static size_t read_file(const char *path, char *out, size_t cap) {
         len = fread(out, 1, cap, file);
         fclose(file);
     }
-    fatUnmount("sd");
+    /* newlib finds a device by name only when the name ends in a colon.
+       Without one it returns the default device, whatever that is. */
+    fatUnmount("sd:");
     return len;
 }
 
