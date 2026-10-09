@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
 
     fprintf(stderr, "sessions found: %zu\n", sessions.count);
     if (!delivered) {
-        if (batch.status == 0) {
+        if (batch.status == UPLOAD_NO_ANSWER) {
             fprintf(stderr, "wii2posthog: no answer from %s after %zu sessions\n", opts.host, batch.sent);
         } else if (batch.status == UPLOAD_NOT_CAPTURE) {
             fprintf(stderr, "wii2posthog: %s answered, but not as PostHog capture does\n", opts.host);
