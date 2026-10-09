@@ -7,7 +7,9 @@
 #include "socket.h"
 #include "tls.h"
 
-enum { SCHEME_CAP = 6, NAME_CAP = 64, HEADER_CAP = 320, RESPONSE_CAP = 512, HTTP_PORT = 80, HTTPS_PORT = 443 };
+/* RESPONSE_CAP holds the status line, every response header and the start of
+   the body. A proxy between the console and PostHog adds headers. */
+enum { SCHEME_CAP = 6, NAME_CAP = 64, HEADER_CAP = 320, RESPONSE_CAP = 4096, HTTP_PORT = 80, HTTPS_PORT = 443 };
 
 typedef struct {
     s32 socket;
