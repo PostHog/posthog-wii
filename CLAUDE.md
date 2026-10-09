@@ -131,8 +131,8 @@ Sources: WiiBrew (`Brick`, `/dev/fs`, `/dev/es`, `Hardware/NAND`), HackMii, wii.
 - Hogzilla is that package's `hogzilla` skin. The game draws him at a whole multiple of his size, so each sprite pixel stays a square.
 - The pickups are team crests from `@posthog/brand`, also fetched into `assets/`. They are vector art, so the atlas tool scales them down and changes nothing else.
 - The Homebrew Channel icon is the `two-player` illustration from `@posthog/brand`, scaled down onto the page color by `tools/icon.py`.
-- The product icon set `@posthog/icons` is licensed from a third party. Do not use it.
-- `@posthog/brand` assets (hogs, RoundHog) are PolyForm Strict. They stay out of the repository until PostHog's brand team approves a release.
+- Do not use the `@posthog/icons` package.
+- `@posthog/brand` assets (hogs, RoundHog) are under the PolyForm Strict license, which does not allow distribution. They stay out of the repository and out of any published build.
 
 ## Commits
 
