@@ -9,14 +9,22 @@ MBEDTLS_VERSION := 3.6.7
 MBEDTLS_SHA256 := a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
 MBEDTLS := assets/mbedtls-$(MBEDTLS_VERSION)
 
-# A new image brings a new libogc. See the Safety section of CLAUDE.md.
-DEVKIT_IMAGE := devkitpro/devkitppc:20251231
+# A new image brings a new libogc. See the Safety section of CLAUDE.md. The
+# digest names one image, where a tag can move to another.
+DEVKIT_IMAGE := devkitpro/devkitppc:20251231@sha256:6e9c24976b1eab09ac349bf899c8a68a7dd154a30d5a3bace23ff9e846a18bab
 DEVKIT := docker run --rm -v "$(CURDIR)":/src -w /src/wii $(DEVKIT_IMAGE) make -j8 MBEDTLS=../$(MBEDTLS)
 
 # The pictures come from PostHog's own npm packages. They are fetched, not
-# committed. See the Brand section of CLAUDE.md.
+# committed. See the Brand section of CLAUDE.md. Each hash is the version's
+# dist.integrity in the npm registry, written in hexadecimal.
 HEDGEHOG_MODE_VERSION := 0.0.62
+HEDGEHOG_MODE_SHA512 := ebcacd35cc7f49bf1fdbb93e742bc34c30c67be9c7acd984bcbd4ce1285fc342d554a2267dc92a96a36e19c068c38841e151988d664c3334242ada1a54d38f43
 BRAND_VERSION := 0.12.3
+BRAND_SHA512 := 5729b5b7d09fe33d481911fc1ddd259f54221bc7322af6b7f28719b28e913a196d01ac18e982c9e648acbe0fd8f36773d70dbc49f601d76270f9bbd44fd3f845
+# Fetches a package to $@.tgz and stops when the file does not have the hash.
+# Usage: $(call fetch_npm,<package>,<version>,<hash>)
+fetch_npm = curl -sSfL -o $@.tgz https://registry.npmjs.org/$(1)/-/$(notdir $(1))-$(2).tgz \
+	&& echo "$(3)  $@.tgz" | shasum -a 512 -c -
 SPRITES := assets/hedgehog-mode/sprites.png
 CRESTS := assets/brand/crests
 ICON_ART := assets/brand/hoggies/two-player.png
@@ -53,18 +61,23 @@ build:
 
 $(SPRITES):
 	mkdir -p $(dir $@)
-	curl -sSfL https://registry.npmjs.org/@posthog/hedgehog-mode/-/hedgehog-mode-$(HEDGEHOG_MODE_VERSION).tgz \
-		| tar -xz -C $(dir $@) --strip-components=2 package/assets/sprites.png package/assets/sprites.json
+	$(call fetch_npm,@posthog/hedgehog-mode,$(HEDGEHOG_MODE_VERSION),$(HEDGEHOG_MODE_SHA512))
+	tar -xzf $@.tgz -C $(dir $@) --strip-components=2 package/assets/sprites.png package/assets/sprites.json
+	rm $@.tgz
 
+# The folder is made after the check, because make takes a folder that exists as built.
 $(CRESTS):
+	mkdir -p $(dir $@)
+	$(call fetch_npm,@posthog/brand,$(BRAND_VERSION),$(BRAND_SHA512))
 	mkdir -p $@
-	curl -sSfL https://registry.npmjs.org/@posthog/brand/-/brand-$(BRAND_VERSION).tgz \
-		| tar -xz -C $@ --strip-components=6 'package/dist/generated/crests/mini/png/*.png'
+	tar -xzf $@.tgz -C $@ --strip-components=6 'package/dist/generated/crests/mini/png/*.png'
+	rm $@.tgz
 
 $(ICON_ART):
 	mkdir -p $(dir $@)
-	curl -sSfL https://registry.npmjs.org/@posthog/brand/-/brand-$(BRAND_VERSION).tgz \
-		| tar -xz -C $(dir $@) --strip-components=5 package/dist/generated/hoggies/png/$(notdir $@)
+	$(call fetch_npm,@posthog/brand,$(BRAND_VERSION),$(BRAND_SHA512))
+	tar -xzf $@.tgz -C $(dir $@) --strip-components=5 package/dist/generated/hoggies/png/$(notdir $@)
+	rm $@.tgz
 
 build/gen/atlas.png: tools/atlas.py $(SPRITES) | $(CRESTS)
 	uv run tools/atlas.py $(dir $(SPRITES)) $(CRESTS) build/gen
