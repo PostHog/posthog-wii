@@ -9,6 +9,7 @@ Two front ends share one C core: a host CLI (`wii2posthog`) and a Wii homebrew a
 - `make test` builds and runs the tests under ASan and UBSan.
 - `build/wii2posthog samples/cdb.vff --dry-run` prints the request bodies without sending.
 - `make wii` cross-compiles the Wii app in Docker to `build/wii/boot.elf` and `boot.dol`, then runs `tools/nand_guard.sh` on the result. The first run downloads mbedTLS into `assets/` and checks its hash.
+- `make sd HOST=https://us.i.posthog.com API_KEY=phc_... UTC_OFFSET=-04:00` builds `build/sd/apps/posthog-wii/`, the folder that goes on an SD card: `boot.dol`, `meta.xml`, `icon.png` and `settings.txt`.
 - `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_... UTC_OFFSET=-04:00` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the three values to the settings file on Dolphin's SD card. Its NAND is seeded once from `samples/cdb.vff`.
 - `make shots` builds `build/wii/debug.elf`, runs it in Dolphin, and saves its frames to `build/shots/`. Read those PNGs to check any drawing change. They are the raw 640-pixel display buffer, so on a 16:9 console the picture looks squeezed sideways.
 - `uv run tools/listener.py <dir>` is a local stand-in for PostHog capture. Point `HOST` at `http://127.0.0.1:18010` and read `<dir>/posts.log`.
@@ -45,7 +46,9 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `wii/play.c` | The game loop: Wii Remote input, the scenery and its colors, the score digits |
 | `wii/main.c` | The app's entry point: the text console and the sync flow |
 | `wii/debug.c` | The debug build's entry point: scripted play and frame capture |
+| `wii/meta.xml` | The name and description that the Homebrew Channel shows |
 | `tools/atlas.py` | Packs the pictures into one Wii texture |
+| `tools/icon.py` | Makes the Homebrew Channel icon |
 | `tools/shots.sh`, `tools/listener.py` | The frame capture run behind `make shots` |
 | `tools/nand_guard.sh` | The build check that a Wii binary has no way to write the NAND |
 | `tests/test_core.c` | A synthetic image builder and the core tests |
@@ -120,6 +123,7 @@ Sources: WiiBrew (`Brick`, `/dev/fs`, `/dev/es`, `Hardware/NAND`), HackMii, wii.
 - Max's sprites and the fire come from the `@posthog/hedgehog-mode` npm package, fetched into the gitignored `assets/`. `tools/atlas.py` copies frames pixel for pixel. No code tints, redraws or rescales them with smoothing.
 - Hogzilla is that package's `hogzilla` skin. The game draws him at a whole multiple of his size, so each sprite pixel stays a square.
 - The pickups are team crests from `@posthog/brand`, also fetched into `assets/`. They are vector art, so the atlas tool scales them down and changes nothing else.
+- The Homebrew Channel icon is the `two-player` illustration from `@posthog/brand`, scaled down onto the page color by `tools/icon.py`.
 - The product icon set `@posthog/icons` is licensed from a third party. Do not use it.
 - `@posthog/brand` assets (hogs, RoundHog) are PolyForm Strict. They stay out of the repository until PostHog's brand team approves a release.
 

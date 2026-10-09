@@ -28,9 +28,17 @@ This project reads those records and sends each play session to a PostHog projec
 
 The Wii stores local time without a time zone, so `--utc-offset` is the offset of the place where the console was used.
 
-## Settings for the Wii app
+## The Wii app
 
-The Wii app reads `apps/posthog-wii/settings.txt` from the SD card:
+Build the folder for the SD card:
+
+```sh
+make sd HOST=https://us.i.posthog.com API_KEY=phc_... UTC_OFFSET=-04:00
+```
+
+Copy `build/sd/apps` to the top of the card. The Homebrew Channel then lists the app as "PostHog for Wii".
+
+The app reads `apps/posthog-wii/settings.txt` from the SD card, which `make sd` writes:
 
 ```
 host = https://us.i.posthog.com

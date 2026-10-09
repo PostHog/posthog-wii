@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<app version="1">
+  <name>PostHog for Wii</name>
+  <coder>Raúl Negrón</coder>
+  <version>0.1.0</version>
+  <short_description>Send your play history to PostHog</short_description>
+  <long_description>Reads the play history that the Wii Menu keeps on this console and sends each play session to your PostHog project. Then it runs a small game.
+
+Put your host and project token in apps/posthog-wii/settings.txt on the SD card.
+
+The app changes nothing on the console.
+
+A, B, Up or 2 jumps. HOME exits.</long_description>
+</app>

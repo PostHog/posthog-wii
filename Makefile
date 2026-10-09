@@ -19,6 +19,10 @@ HEDGEHOG_MODE_VERSION := 0.0.62
 BRAND_VERSION := 0.12.3
 SPRITES := assets/hedgehog-mode/sprites.png
 CRESTS := assets/brand/crests
+ICON_ART := assets/brand/hoggies/two-player.png
+
+# The folder to copy to the top of an SD card.
+SD := build/sd/apps/posthog-wii
 
 DOLPHIN := /Applications/Dolphin.app/Contents/MacOS/Dolphin
 DOLPHIN_USER := $(CURDIR)/.dolphin
@@ -27,10 +31,11 @@ DOLPHIN_BOARD := $(DOLPHIN_USER)/Wii/title/00000001/00000002/data/cdb.vff
 DOLPHIN_SETTINGS := $(DOLPHIN_USER)/Load/WiiSDSync/apps/posthog-wii/settings.txt
 SHOTS_PORT := 18010
 
-# What "make dolphin" writes to the settings file on Dolphin's SD card.
+# What "make dolphin" and "make sd" write to the settings file.
 HOST ?= http://localhost:8010
 API_KEY ?=
 UTC_OFFSET ?= +00:00
+write_settings = printf 'host = %s\napi_key = %s\nutc_offset = %s\n' '$(HOST)' '$(API_KEY)' '$(UTC_OFFSET)' > $(1)
 
 build/wii2posthog: host/main.c host/http.c $(CORE) $(HEADERS) host/http.h | build
 	$(CC) $(CFLAGS) $(filter %.c,$^) -lcurl -o $@
@@ -54,8 +59,16 @@ $(CRESTS):
 	curl -sSfL https://registry.npmjs.org/@posthog/brand/-/brand-$(BRAND_VERSION).tgz \
 		| tar -xz -C $@ --strip-components=6 'package/dist/generated/crests/mini/png/*.png'
 
+$(ICON_ART):
+	mkdir -p $(dir $@)
+	curl -sSfL https://registry.npmjs.org/@posthog/brand/-/brand-$(BRAND_VERSION).tgz \
+		| tar -xz -C $(dir $@) --strip-components=5 package/dist/generated/hoggies/png/$(notdir $@)
+
 build/gen/atlas.png: tools/atlas.py $(SPRITES) | $(CRESTS)
 	uv run tools/atlas.py $(dir $(SPRITES)) $(CRESTS) build/gen
+
+$(SD)/icon.png: tools/icon.py $(ICON_ART)
+	uv run tools/icon.py $(ICON_ART) $@
 
 $(MBEDTLS):
 	mkdir -p assets
@@ -70,7 +83,7 @@ $(DOLPHIN_BOARD):
 	mkdir -p $(dir $@)
 	cp samples/cdb.vff $@
 
-.PHONY: test wii dolphin shots clean
+.PHONY: test wii sd dolphin shots clean
 test: build/test_core build/test_game
 	./build/test_core
 	./build/test_game
@@ -78,9 +91,15 @@ test: build/test_core build/test_game
 wii: build/gen/atlas.png | $(MBEDTLS)
 	$(DEVKIT)
 
+# A console cannot reach the default HOST, which is this computer's own address.
+sd: wii $(SD)/icon.png
+	@test -n '$(API_KEY)' || { echo 'sd: pass HOST, API_KEY and UTC_OFFSET' >&2; exit 1; }
+	cp build/wii/boot.dol wii/meta.xml $(SD)/
+	$(call write_settings,$(SD)/settings.txt)
+
 dolphin: wii $(DOLPHIN_BOARD)
 	mkdir -p $(dir $(DOLPHIN_SETTINGS))
-	printf 'host = %s\napi_key = %s\nutc_offset = %s\n' '$(HOST)' '$(API_KEY)' '$(UTC_OFFSET)' > $(DOLPHIN_SETTINGS)
+	$(call write_settings,$(DOLPHIN_SETTINGS))
 	$(DOLPHIN) -u $(DOLPHIN_USER) -C Dolphin.Analytics.PermissionAsked=True \
 		-C Dolphin.Core.WiiSDCardEnableFolderSync=True \
 		-C Graphics.Settings.InternalResolution=3 -e build/wii/boot.elf
