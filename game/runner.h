@@ -49,7 +49,7 @@ typedef struct {
     float speed;    /* pixels scrolled per tick */
     uint32_t score, best;
 
-    /* Internal state. */
+    /* Private. */
     float width, ground_y, vy, gap;
     bool jump_held, air_jump_used;
     uint32_t ticks_since_press, bonus, random;

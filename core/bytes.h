@@ -9,9 +9,8 @@ typedef struct {
     size_t len;
 } bytes;
 
-/* A range or a read that leaves the buffer yields an empty range or 0. A
-   truncated or corrupt image then fails the next magic check, so parsers
-   need no error path per read. */
+/* A read past the end of the buffer returns 0, and a range past the end is
+   empty. A parser relies on this in place of an error check per read. */
 static inline bytes bytes_at(bytes b, size_t offset, size_t len) {
     if (offset > b.len || len > b.len - offset) {
         return (bytes){0};
@@ -45,7 +44,6 @@ static inline uint32_t le32_at(bytes b, size_t offset) {
     return (uint32_t)le16_at(b, offset + 2) << 16 | le16_at(b, offset);
 }
 
-/* Writes the low size bytes of value, most significant byte first. */
 static inline void put_be(uint8_t *out, uint64_t value, size_t size) {
     for (size_t i = 0; i < size; i++) {
         out[i] = (uint8_t)(value >> (8 * (size - 1 - i)));

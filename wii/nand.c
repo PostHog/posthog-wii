@@ -5,8 +5,6 @@
 #include <gccore.h>
 #include <ogc/isfs.h>
 
-/* This is the only file that calls ISFS, and it opens for reading only. */
-
 enum { CHUNK_SIZE = 0x8000, IOS_ALIGNMENT = 32 };
 
 static const char MESSAGE_BOARD_PATH[] = "/title/00000001/00000002/data/cdb.vff";

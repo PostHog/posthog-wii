@@ -80,7 +80,6 @@ static void session_digest(const playlog_session *session, const char *label, ui
     sha1(name, sizeof name, digest);
 }
 
-/* Stamps the version and variant bits on the 16 bytes and writes them. */
 static void put_uuid(builder *b, uint8_t uuid[UUID_SIZE], unsigned version) {
     uuid[6] = (uint8_t)((uuid[6] & 0x0F) | version << 4);
     uuid[8] = (uint8_t)((uuid[8] & 0x3F) | 0x80);
@@ -103,11 +102,11 @@ static void put_event_uuid(builder *b, const playlog_session *session, const cha
     put_uuid(b, digest, 5);
 }
 
-/* PostHog builds sessions only from UUIDv7 session IDs, and its date
-   filters prune a session whose embedded time is more than three days from
-   its events. The ID carries the session start in console local time, which
-   is within a day of the event time and does not move when the configured
-   UTC offset changes. */
+/* PostHog builds a session only from a UUIDv7 session ID, and its date
+   filters drop a session whose embedded time is more than three days from
+   its events. The ID embeds the session start in console local time. That
+   is within a day of the event time, and it does not change with the
+   configured UTC offset. */
 static void put_session_id(builder *b, const playlog_session *session) {
     uint8_t digest[SHA1_SIZE];
     session_digest(session, "session", digest);
@@ -193,8 +192,8 @@ size_t events_batch_json(const events_config *config,
     builder b = {out, out_cap, 0};
     put(&b, "{\"api_key\":");
     put_json_string(&b, config->api_key);
-    /* No "sent_at" field: PostHog shifts every timestamp by the gap between
-       sent_at and its own clock, which would move old sessions. */
+    /* The body has no sent_at field. PostHog shifts every timestamp by the
+       gap between sent_at and its own clock, which would move old sessions. */
     put(&b, ",\"historical_migration\":true,\"batch\":[");
     for (size_t i = 0; i < count; i++) {
         if (i > 0) {

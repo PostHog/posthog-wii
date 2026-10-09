@@ -28,8 +28,9 @@ static const float SPAWN_MARGIN = 20.0f;
 static const float PICKUP_MIN_HEIGHT = 60.0f;
 static const float PICKUP_HEIGHT_RANGE = 70.0f;
 
-/* Hit areas inside the sprite cell: left, top, right, bottom. Max's and the
-   fire's are smaller than the art, so a near miss is a miss. */
+/* Hit areas inside the sprite cell, as left, top, right, bottom. Max's and
+   the fire's are smaller than the art, so art that only touches at its
+   edges does not end the run. */
 typedef struct {
     float left, top, right, bottom;
 } box;

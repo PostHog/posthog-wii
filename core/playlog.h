@@ -17,9 +17,8 @@ typedef struct {
 
 typedef void playlog_session_fn(void *ctx, const playlog_session *session);
 
-/* Calls fn once per play session recorded in a Message Board image
-   (cdb.vff), in directory order. Every session has end_ticks >= start_ticks
-   and a year from 2000 through 2099. See ticks.h for the tick unit. */
+/* Calls fn for each play session in a Message Board image (cdb.vff). Each
+   session has end_ticks >= start_ticks and a year from 2000 through 2099. */
 void playlog_each_session(const uint8_t *image, size_t image_len,
                           playlog_session_fn *fn, void *ctx);
 

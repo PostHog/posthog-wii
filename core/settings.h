@@ -12,14 +12,12 @@ typedef struct {
     int utc_offset_minutes;           /* console local time minus UTC */
 } settings;
 
-/* Reads the settings file: one "name = value" per line, with the names host,
-   api_key and utc_offset. Any other line changes nothing, and so does a value
-   that is too long or an offset that settings_utc_offset rejects. A field
-   that no line sets keeps the value it had. */
+/* Reads "name = value" lines for host, api_key and utc_offset. A line it
+   cannot use changes nothing, so the field keeps the value it had. */
 void settings_parse(settings *out, const char *text, size_t len);
 
-/* Reads an offset written as a sign, two digits, a colon and two digits.
-   Returns false and leaves minutes alone for any other text. */
+/* Reads an offset such as -04:00. Returns false, and leaves minutes alone,
+   for any other form. */
 bool settings_utc_offset(const char *text, size_t len, int *minutes);
 
 #endif

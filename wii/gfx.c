@@ -9,8 +9,7 @@
 #include "atlas.h"
 #include "hedgehog_tpl.h"
 
-/* This is the only file that calls GX. The setup follows the gxSprites
-   example that ships with libogc. */
+/* The setup follows the gxSprites example that ships with libogc. */
 
 enum { FIFO_SIZE = 256 * 1024 };
 

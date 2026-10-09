@@ -7,8 +7,8 @@
 #include "events.h"
 #include "playlog.h"
 
-/* Each request costs a connection, which is slow on the Wii, so a request
-   carries many sessions. */
+/* A request carries many sessions because each request opens a connection,
+   which is slow on the Wii. */
 enum { UPLOAD_SESSIONS_PER_REQUEST = 100, UPLOAD_HTTP_OK = 200 };
 
 /* Sends one HTTP POST of body to host plus path. Returns the HTTP status, or
@@ -16,14 +16,13 @@ enum { UPLOAD_SESSIONS_PER_REQUEST = 100, UPLOAD_HTTP_OK = 200 };
 typedef long upload_post_fn(const char *host, const char *path, const char *content_type, const void *body,
                             size_t body_len);
 
-/* Sends sessions to PostHog a request at a time. The first request that the
-   host does not accept stops the upload, and later sessions are not sent. */
+/* The first request that the host rejects stops the upload. Later sessions
+   are not sent. */
 typedef struct {
-    /* Results. */
     size_t sent; /* sessions the host accepted */
     long status; /* UPLOAD_HTTP_OK, or the status of the request that stopped the upload */
 
-    /* Internal state. */
+    /* Private. */
     events_config config;
     const char *host;
     upload_post_fn *post;

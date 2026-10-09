@@ -5,9 +5,8 @@
 
 #include "runner.h"
 
-/* A player that clears every fire: it holds jump from just before a row of
-   fires until the row has passed. The tests use it to prove that every
-   track can be survived, and the debug build uses it to play unattended. */
+/* Says whether to hold jump on this tick. It holds jump from just before a
+   row of fires until the row has passed, which clears every fire. */
 bool autoplay_jump(const runner *r);
 
 #endif
