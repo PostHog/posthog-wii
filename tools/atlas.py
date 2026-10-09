@@ -8,7 +8,10 @@ The hedgehog-mode sprite sheet is 2000 pixels wide and a Wii texture is at
 most 1024, so the sprites are copied, pixel for pixel, into a smaller sheet.
 Each sprite sits at the top-left corner of an 80x80 cell.
 
-Usage: atlas.py <hedgehog-mode assets dir> <output dir>
+Pickups are PostHog team crests, which are vector art published as 115-pixel
+PNGs. They are scaled down to fit a cell.
+
+Usage: atlas.py <hedgehog-mode assets dir> <crests dir> <output dir>
 """
 
 import json
@@ -20,34 +23,28 @@ from PIL import Image
 CELL = 80
 COLUMNS = 12
 HEDGEHOG_ANIMATIONS = ["idle", "walk", "fall", "death"]
-FLAGS = [
-    "puerto-rico",
-    "united-kingdom",
-    "united-states",
-    "germany",
-    "brazil",
-    "japan",
-    "canada",
-    "france",
-    "spain",
-    "mexico",
-    "india",
-    "australia",
-    "netherlands",
-    "sweden",
-    "poland",
-    "south-africa",
+PICKUP_SIZE = 64
+PICKUP_CRESTS = [
+    "feature-flags",
+    "experiments",
+    "replay",
+    "product-analytics",
+    "web-analytics",
+    "surveys",
+    "error-tracking",
+    "ai-observability",
+    "workflows",
+    "managed-warehouse",
 ]
 
 
-def main(source: Path, output: Path) -> None:
+def main(source: Path, crests: Path, output: Path) -> None:
     sheet = Image.open(source / "sprites.png").convert("RGBA")
     layout = json.loads((source / "sprites.json").read_text())
     animations: dict[str, list[str]] = layout["animations"]
 
     groups: dict[str, list[str]] = {name: animations[f"skins/default/{name}/tile"] for name in HEDGEHOG_ANIMATIONS}
     groups["fire"] = animations["overlays/fire/tile"]
-    groups["flag"] = [f"flags/{name}.png" for name in FLAGS]
 
     cells: list[Image.Image] = []
     constants: list[str] = []
@@ -61,6 +58,14 @@ def main(source: Path, output: Path) -> None:
             cell = Image.new("RGBA", (CELL, CELL), (0, 0, 0, 0))
             cell.paste(sheet.crop((box["x"], box["y"], box["x"] + box["w"], box["y"] + box["h"])), (0, 0))
             cells.append(cell)
+
+    constants.append(f"ATLAS_PICKUP_FIRST = {len(cells)}")
+    constants.append(f"ATLAS_PICKUP_COUNT = {len(PICKUP_CRESTS)}")
+    for name in PICKUP_CRESTS:
+        crest = Image.open(crests / f"{name}.png").convert("RGBA")
+        cell = Image.new("RGBA", (CELL, CELL), (0, 0, 0, 0))
+        cell.paste(crest.resize((PICKUP_SIZE, PICKUP_SIZE), Image.Resampling.LANCZOS), (0, 0))
+        cells.append(cell)
 
     # Flat rectangles are drawn from this cell, so they need no second texture.
     constants.append(f"ATLAS_WHITE = {len(cells)}")
@@ -89,4 +94,4 @@ def main(source: Path, output: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]))
+    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]))

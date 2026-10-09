@@ -15,7 +15,8 @@ typedef struct {
 
 /* Writes the PostHog /batch request body for the sessions: a "game started"
    and a "game ended" event per session. Returns the body length, or 0 when
-   out_cap is below EVENTS_JSON_CAP(count). */
+   out_cap is below EVENTS_JSON_CAP(count). Event and session IDs depend only
+   on what the console recorded, so a resend repeats them. */
 size_t events_batch_json(const events_config *config,
                          const playlog_session *sessions, size_t count,
                          char *out, size_t out_cap);

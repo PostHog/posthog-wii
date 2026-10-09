@@ -5,6 +5,7 @@
 """A local stand-in for PostHog capture that also receives debug frames.
 
 POST /shot?tick=..&width=..&height=.. saves the Wii display buffer as a PNG.
+POST /done creates the file "done", which tells tools/shots.sh to stop.
 Every other POST is appended to posts.log with its body.
 
 Usage: listener.py <output dir> [port]
@@ -41,6 +42,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if url.path == "/shot":
             size = (int(query["width"]), int(query["height"]))
             decode_display_buffer(body, size).save(OUT / f"shot-{int(query['tick']):04d}.png")
+        elif url.path == "/done":
+            (OUT / "done").touch()
         else:
             with (OUT / "posts.log").open("ab") as log:
                 log.write(self.path.encode() + b" " + body + b"\n")

@@ -7,13 +7,13 @@ include $(DEVKITPPC)/wii_rules
 HOST ?= http://127.0.0.1:8010
 API_KEY ?=
 UTC_OFFSET_MINUTES ?= 0
-# Set to a listener URL to build the scripted, self-capturing debug game.
+# Where the debug build posts its frames.
 DEBUG_HOST ?=
 
 OUT := ../build/wii
 GEN := ../build/gen
-SOURCES := main.c nand.c http.c gfx.c play.c ../game/runner.c \
-	../core/vff.c ../core/playlog.c ../core/ticks.c ../core/sha1.c ../core/events.c ../core/summary.c
+GAME := http.c gfx.c play.c ../game/runner.c $(GEN)/hedgehog_tpl.s
+HEADERS := $(wildcard *.h ../core/*.h ../game/*.h) $(GEN)/atlas.h $(OUT)/settings.h
 
 CFLAGS := -std=gnu11 -g -O2 -Wall -Wextra -Werror $(MACHDEP) -I../core -I../game -I$(GEN) -I$(OUT) -I$(LIBOGC_INC)
 LIBS := -L$(LIBOGC_LIB) -lwiiuse -lbte -logc -lm
@@ -22,14 +22,19 @@ define SETTINGS_H
 #define POSTHOG_HOST "$(HOST)"
 #define POSTHOG_API_KEY "$(API_KEY)"
 #define UTC_OFFSET_MINUTES ($(UTC_OFFSET_MINUTES))
-$(if $(DEBUG_HOST),#define DEBUG_HOST "$(DEBUG_HOST)")
+#define DEBUG_HOST "$(DEBUG_HOST)"
 endef
 export SETTINGS_H
 
 $(OUT)/boot.dol: $(OUT)/boot.elf
 	elf2dol $< $@
 
-$(OUT)/boot.elf: $(SOURCES) $(GEN)/hedgehog_tpl.s $(wildcard *.h ../core/*.h ../game/*.h) $(GEN)/atlas.h $(OUT)/settings.h Makefile
+# The app: the play history sync, then the game.
+$(OUT)/boot.elf: main.c nand.c $(GAME) $(wildcard ../core/*.c) $(HEADERS) Makefile
+	$(CC) $(CFLAGS) $(filter %.c %.s,$^) $(LIBS) -o $@
+
+# The debug build: the game alone, playing by itself. See debug.c.
+$(OUT)/debug.elf: debug.c ../game/autoplay.c $(GAME) $(HEADERS) Makefile
 	$(CC) $(CFLAGS) $(filter %.c %.s,$^) $(LIBS) -o $@
 
 # The file is rewritten only when a setting changes, so that alone rebuilds.

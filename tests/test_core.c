@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bytes.h"
 #include "check.h"
 #include "events.h"
 #include "playlog.h"
 #include "sha1.h"
 #include "summary.h"
 #include "ticks.h"
+#include "upload.h"
 
 enum {
     IMAGE_SIZE = 0x280000,
@@ -71,12 +73,6 @@ static void collect(void *ctx, const playlog_session *session) {
         found->items[found->count] = *session;
     }
     found->count++;
-}
-
-static void put_be(uint8_t *out, uint64_t value, int size) {
-    for (int i = 0; i < size; i++) {
-        out[i] = (uint8_t)(value >> (8 * (size - 1 - i)));
-    }
 }
 
 static void put_le(uint8_t *out, uint32_t value, int size) {
@@ -330,20 +326,80 @@ static void test_builds_the_batch_body(void) {
     CHECK(strstr(json, "\"duration_seconds\":11}") != NULL);
     CHECK(strstr(json, "sent_at") == NULL);
 
-    char started[64], ended[64], started_utc[64], session_id[64], expected_prefix[64];
+    char started[64], ended[64], started_utc[64], session_id[64], session_id_utc[64], expected_prefix[64];
     json_field(json, "uuid", 0, started);
     json_field(json, "uuid", 1, ended);
     json_field(json_utc, "uuid", 0, started_utc);
     json_field(json, "$session_id", 0, session_id);
-    long long start_ms = (721863864LL + 946684800 + 240 * 60) * 1000 + 500;
-    snprintf(expected_prefix, sizeof expected_prefix, "%08llx-%04llx-7", start_ms >> 16, start_ms & 0xFFFF);
+    json_field(json_utc, "$session_id", 0, session_id_utc);
+    long long local_start_ms = (721863864LL + 946684800) * 1000 + 500;
+    snprintf(expected_prefix, sizeof expected_prefix, "%08llx-%04llx-7", local_start_ms >> 16, local_start_ms & 0xFFFF);
 
     CHECK(strlen(started) == 36 && started[14] == '5');
     CHECK(strcmp(started, ended) != 0);
     CHECK(strcmp(started, started_utc) == 0);
+    CHECK(strcmp(session_id, session_id_utc) == 0);
     CHECK(strncmp(session_id, expected_prefix, strlen(expected_prefix)) == 0);
 
     CHECK(events_batch_json(&utc, &session, 1, json, 64) == 0);
+}
+
+static struct {
+    int requests;
+    int fail_on_request;
+    bool to_batch_path;
+    size_t last_len;
+    char last_end[3];
+} posted;
+
+static long record_post(const char *host, const char *path, const char *content_type, const void *body,
+                        size_t body_len) {
+    (void)host;
+    (void)content_type;
+    posted.requests++;
+    posted.to_batch_path = strcmp(path, "/batch/") == 0;
+    posted.last_len = body_len;
+    memcpy(posted.last_end, body_len >= 2 ? (const char *)body + body_len - 2 : "??", 2);
+    return posted.requests == posted.fail_on_request ? 500 : UPLOAD_HTTP_OK;
+}
+
+static bool upload_sessions(upload *batch, const playlog_session *session, int count, int fail_on_request) {
+    events_config config = {.api_key = "phc_test"};
+    memset(&posted, 0, sizeof posted);
+    posted.fail_on_request = fail_on_request;
+    upload_begin(batch, &config, "http://example.com", record_post);
+    for (int i = 0; i < count; i++) {
+        upload_add(batch, session);
+    }
+    return upload_end(batch);
+}
+
+static void test_uploads_in_requests_and_stops_at_the_first_failure(void) {
+    static upload batch;
+    playlog_session session = {.game_code = "HAAA", .maker_code = "01", .title = "Photo Channel"};
+
+    CHECK(upload_sessions(&batch, &session, 2 * UPLOAD_SESSIONS_PER_REQUEST + 10, 0));
+    CHECK(posted.requests == 3);
+    CHECK(posted.to_batch_path);
+    CHECK(batch.sent == 2 * UPLOAD_SESSIONS_PER_REQUEST + 10);
+
+    CHECK(!upload_sessions(&batch, &session, 3 * UPLOAD_SESSIONS_PER_REQUEST, 2));
+    CHECK(posted.requests == 2);
+    CHECK(batch.sent == UPLOAD_SESSIONS_PER_REQUEST);
+    CHECK(batch.status == 500);
+
+    CHECK(upload_sessions(&batch, &session, 0, 0));
+    CHECK(posted.requests == 0);
+}
+
+static void test_a_full_request_of_the_longest_sessions_fits_its_buffer(void) {
+    static upload batch;
+    playlog_session session = {.game_code = "\"\\\"\\", .maker_code = "\"\\"};
+    memset(session.title, '\x01', sizeof session.title - 1);
+
+    CHECK(upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, 0));
+    CHECK(posted.last_len > 0);
+    CHECK(memcmp(posted.last_end, "]}", 2) == 0);
 }
 
 static void test_summarizes_a_session(void) {
@@ -373,6 +429,8 @@ int main(void) {
     test_skips_entries_that_cannot_be_sessions();
     test_survives_damaged_images();
     test_builds_the_batch_body();
+    test_uploads_in_requests_and_stops_at_the_first_failure();
+    test_a_full_request_of_the_longest_sessions_fits_its_buffer();
     test_summarizes_a_session();
     test_sha1_matches_the_standard_vector();
     return report();

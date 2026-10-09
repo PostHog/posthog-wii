@@ -2,7 +2,7 @@
 
 /* Speeds are pixels per tick. */
 static const float JUMP_SPEED = 14.5f;
-static const float DOUBLE_JUMP_SPEED = 12.5f;
+static const float AIR_JUMP_SPEED = 12.5f;
 static const float MAX_FALL_SPEED = 18.0f;
 /* Gravity is weakest while the button is held on the way up, so a long
    press jumps high, a tap jumps low, and every jump comes down fast. */
@@ -25,12 +25,8 @@ static const float MIN_GAP_TICKS = 42.0f;
 static const float MAX_GAP_TICKS = 85.0f;
 static const float SPAWN_MARGIN = 20.0f;
 
-static const float FLAG_MIN_HEIGHT = 60.0f;
-static const float FLAG_HEIGHT_RANGE = 70.0f;
-
-/* Rows of the sprite cell that touch the ground. */
-static const float MAX_FEET = 74.0f;
-static const float FIRE_FOOT = 72.0f;
+static const float PICKUP_MIN_HEIGHT = 60.0f;
+static const float PICKUP_HEIGHT_RANGE = 70.0f;
 
 /* Hit areas inside the sprite cell: left, top, right, bottom. Max's and the
    fire's are smaller than the art, so a near miss is a miss. */
@@ -39,17 +35,16 @@ typedef struct {
 } box;
 static const box MAX_BOX = {22, 30, 58, 72};
 static const box FIRE_BOX = {18, 12, 60, 72};
-static const box FLAG_BOX = {0, 0, 31, 21};
+static const box PICKUP_BOX = {0, 0, 64, 64};
 
 enum {
-    MAX_JUMPS = 2,
     /* A press this many ticks before landing still jumps on landing. */
     JUMP_BUFFER_TICKS = 8,
     /* A press right after a crash is usually a late jump, not a restart. */
     RESTART_LOCK_TICKS = 40,
-    FLAG_POINTS = 50,
+    PICKUP_POINTS = 50,
     PIXELS_PER_POINT = 10,
-    FLAG_ODDS = 3,
+    PICKUP_ODDS = 3,
     IDLE_TICKS_PER_FRAME = 8,
     AIR_TICKS_PER_FRAME = 3,
     FALLEN_TICKS_PER_FRAME = 3,
@@ -68,12 +63,11 @@ static float random_fraction(runner *r) {
 }
 
 static float rest_y(const runner *r) {
-    return r->ground_y - MAX_FEET;
+    return r->ground_y - (float)RUNNER_MAX_FEET;
 }
 
-static void set_animation(runner *r, runner_animation animation) {
-    r->animation_ticks = animation == r->animation ? r->animation_ticks + 1 : 0;
-    r->animation = animation;
+static bool grounded(const runner *r) {
+    return r->max_y >= rest_y(r);
 }
 
 static void add_item(runner *r, runner_item_kind kind, float x, float y) {
@@ -91,20 +85,20 @@ static void spawn_group(runner *r) {
     uint32_t fires = 1 + next_random(r) % most;
     float x = r->width + SPAWN_MARGIN;
     for (uint32_t i = 0; i < fires; i++) {
-        add_item(r, RUNNER_FIRE, x + (float)i * FIRE_SPACING, r->ground_y - FIRE_FOOT);
+        add_item(r, RUNNER_FIRE, x + (float)i * FIRE_SPACING, r->ground_y - (float)RUNNER_FIRE_FOOT);
     }
 
     float group_width = (float)(fires - 1) * FIRE_SPACING + (float)RUNNER_CELL;
     float open = r->speed * (MIN_GAP_TICKS + random_fraction(r) * (MAX_GAP_TICKS - MIN_GAP_TICKS));
     r->gap = group_width + open;
-    if (next_random(r) % FLAG_ODDS == 0) {
-        float height = FLAG_MIN_HEIGHT + random_fraction(r) * FLAG_HEIGHT_RANGE;
-        add_item(r, RUNNER_FLAG, x + group_width + open / 2, r->ground_y - height - FLAG_BOX.bottom);
+    if (next_random(r) % PICKUP_ODDS == 0) {
+        float height = PICKUP_MIN_HEIGHT + random_fraction(r) * PICKUP_HEIGHT_RANGE;
+        add_item(r, RUNNER_PICKUP, x + group_width + open / 2, r->ground_y - height - PICKUP_BOX.bottom);
     }
 }
 
 static bool touches_max(const runner *r, const runner_item *item) {
-    const box *b = item->kind == RUNNER_FIRE ? &FIRE_BOX : &FLAG_BOX;
+    const box *b = item->kind == RUNNER_FIRE ? &FIRE_BOX : &PICKUP_BOX;
     return item->x + b->left < (float)RUNNER_MAX_X + MAX_BOX.right && item->x + b->right > (float)RUNNER_MAX_X + MAX_BOX.left &&
            item->y + b->top < r->max_y + MAX_BOX.bottom && item->y + b->bottom > r->max_y + MAX_BOX.top;
 }
@@ -115,21 +109,19 @@ static void fall(runner *r, float gravity) {
         r->vy = MAX_FALL_SPEED;
     }
     r->max_y += r->vy;
-    if (r->max_y >= rest_y(r)) {
+    if (grounded(r)) {
         r->max_y = rest_y(r);
         r->vy = 0;
-        r->jumps_used = 0;
     }
 }
 
 static void jump_if_asked(runner *r) {
-    bool grounded = r->max_y >= rest_y(r);
-    if (grounded && r->ticks_since_press <= JUMP_BUFFER_TICKS) {
+    if (grounded(r) && r->ticks_since_press <= JUMP_BUFFER_TICKS) {
         r->vy = -JUMP_SPEED;
-        r->jumps_used = 1;
-    } else if (!grounded && r->ticks_since_press == 0 && r->jumps_used < MAX_JUMPS) {
-        r->vy = -DOUBLE_JUMP_SPEED;
-        r->jumps_used = MAX_JUMPS;
+        r->air_jump_used = false;
+    } else if (!grounded(r) && r->ticks_since_press == 0 && !r->air_jump_used) {
+        r->vy = -AIR_JUMP_SPEED;
+        r->air_jump_used = true;
     } else {
         return;
     }
@@ -154,58 +146,60 @@ static void scroll(runner *r) {
     }
 }
 
-static void end_run(runner *r) {
-    r->phase = RUNNER_OVER;
-    r->over_ticks = 0;
-    if (r->score > r->best) {
-        r->best = r->score;
-    }
-    set_animation(r, RUNNER_FALLEN);
-}
-
-static void run(runner *r, bool jump) {
+/* Returns false when Max touched a fire. */
+static bool run(runner *r, bool jump) {
     jump_if_asked(r);
     fall(r, r->vy >= 0 ? GRAVITY_FALLING : jump ? GRAVITY_HELD : GRAVITY_RELEASED);
     scroll(r);
 
+    bool burned = false;
     for (size_t i = r->item_count; i-- > 0;) {
         if (!touches_max(r, &r->items[i])) {
             continue;
         }
         if (r->items[i].kind == RUNNER_FIRE) {
-            end_run(r);
-            return;
+            burned = true;
+        } else {
+            r->bonus += PICKUP_POINTS;
+            remove_item(r, i);
         }
-        r->bonus += FLAG_POINTS;
-        remove_item(r, i);
     }
     r->score = (uint32_t)r->distance / PIXELS_PER_POINT + r->bonus;
-    set_animation(r, r->max_y >= rest_y(r) ? RUNNER_RUN : RUNNER_AIR);
+    return !burned;
 }
 
 static void start_run(runner *r) {
     r->phase = RUNNER_RUNNING;
     r->item_count = 0;
     r->distance = 0;
-    r->score = 0;
     r->bonus = 0;
     r->max_y = rest_y(r);
     r->vy = 0;
-    r->jumps_used = 0;
     r->speed = START_SPEED;
     r->gap = r->width / 2;
+}
+
+static runner_animation animation_for(const runner *r) {
+    switch (r->phase) {
+    case RUNNER_READY:
+        return RUNNER_IDLE;
+    case RUNNER_OVER:
+        return RUNNER_FALLEN;
+    case RUNNER_RUNNING:
+        break;
+    }
+    return grounded(r) ? RUNNER_RUN : RUNNER_AIR;
 }
 
 void runner_init(runner *r, float width, float ground_y, uint32_t seed) {
     *r = (runner){
         .width = width,
         .ground_y = ground_y,
-        .max_y = ground_y - MAX_FEET,
         /* A button still held from the previous screen is not a press. */
         .jump_held = true,
-        .ticks_since_press = JUMP_BUFFER_TICKS + 1,
         .random = seed ? seed : 1,
     };
+    r->max_y = rest_y(r);
 }
 
 void runner_step(runner *r, bool jump) {
@@ -213,31 +207,39 @@ void runner_step(runner *r, bool jump) {
     r->jump_held = jump;
     r->ticks_since_press = pressed ? 0 : r->ticks_since_press + 1;
 
-    if (r->phase == RUNNER_READY && !pressed) {
-        set_animation(r, RUNNER_IDLE);
-    } else if (r->phase == RUNNER_OVER && !(pressed && r->over_ticks > RESTART_LOCK_TICKS)) {
-        r->over_ticks++;
-        fall(r, GRAVITY_FALLING);
-        set_animation(r, RUNNER_FALLEN);
-    } else {
-        if (r->phase != RUNNER_RUNNING) {
-            start_run(r);
-        }
-        run(r, jump);
+    /* The fallen animation starts when a run ends, so its clock also times
+       the restart lock. */
+    bool restart = r->phase == RUNNER_OVER && r->animation_ticks > RESTART_LOCK_TICKS;
+    if (pressed && (r->phase == RUNNER_READY || restart)) {
+        start_run(r);
     }
+
+    if (r->phase == RUNNER_OVER) {
+        fall(r, GRAVITY_FALLING);
+    } else if (r->phase == RUNNER_RUNNING && !run(r, jump)) {
+        r->phase = RUNNER_OVER;
+        if (r->score > r->best) {
+            r->best = r->score;
+        }
+    }
+
+    runner_animation animation = animation_for(r);
+    r->animation_ticks = animation == r->animation ? r->animation_ticks + 1 : 0;
+    r->animation = animation;
 }
 
 unsigned runner_frame(const runner *r, unsigned frame_count) {
+    unsigned fallen_frame = r->animation_ticks / FALLEN_TICKS_PER_FRAME;
     switch (r->animation) {
     case RUNNER_RUN:
         return (unsigned)r->distance / RUN_PIXELS_PER_FRAME % frame_count;
     case RUNNER_AIR:
         return r->animation_ticks / AIR_TICKS_PER_FRAME % frame_count;
-    case RUNNER_FALLEN: {
-        unsigned frame = r->animation_ticks / FALLEN_TICKS_PER_FRAME;
-        return frame < frame_count ? frame : frame_count - 1;
+    case RUNNER_FALLEN:
+        return fallen_frame < frame_count ? fallen_frame : frame_count - 1;
+    case RUNNER_IDLE:
+    case RUNNER_ANIMATION_COUNT:
+        break;
     }
-    default:
-        return r->animation_ticks / IDLE_TICKS_PER_FRAME % frame_count;
-    }
+    return r->animation_ticks / IDLE_TICKS_PER_FRAME % frame_count;
 }

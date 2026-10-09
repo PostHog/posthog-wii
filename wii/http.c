@@ -8,38 +8,45 @@
 
 #include <network.h>
 
-#include "send.h"
-
 /* Plain HTTP over libogc sockets. PostHog Cloud needs TLS, which this
-   sender does not have. */
+   file does not have. */
 
-enum { NAME_CAP = 64, HEADER_CAP = 320, RESPONSE_CAP = 64, RETRY_DELAY_US = 100000 };
+enum { NAME_CAP = 64, HEADER_CAP = 320, RESPONSE_CAP = 64, RETRY_DELAY_US = 100000, NETWORK_TRIES = 150 };
 
+/* A console with no usable network, such as a Wii mini or one whose router
+   it cannot join, must not hang here, so the number of tries is bounded. */
 static bool network_ready(void) {
     static bool ready;
-    while (!ready) {
+    for (int tries = 0; !ready && tries < NETWORK_TRIES; tries++) {
         s32 result = net_init();
-        if (result == -EAGAIN) {
+        if (result == 0) {
+            ready = true;
+        } else if (result != -EAGAIN) {
+            break;
+        } else {
             usleep(RETRY_DELAY_US);
-            continue;
         }
-        if (result < 0) {
-            return false;
-        }
-        ready = true;
     }
-    return true;
+    return ready;
 }
 
+/* The last answer is kept because every request of an upload goes to the
+   same host and each lookup is a round trip. */
 static bool resolve(const char *name, struct in_addr *address) {
-    if (inet_aton(name, address)) {
-        return true;
+    static char known_name[NAME_CAP];
+    static struct in_addr known_address;
+    if (known_name[0] == '\0' || strcmp(name, known_name) != 0) {
+        struct hostent *entry = NULL;
+        if (!inet_aton(name, &known_address)) {
+            entry = net_gethostbyname(name);
+            if (!entry || entry->h_length != sizeof known_address || !entry->h_addr_list[0]) {
+                return false;
+            }
+            memcpy(&known_address, entry->h_addr_list[0], sizeof known_address);
+        }
+        snprintf(known_name, sizeof known_name, "%s", name);
     }
-    struct hostent *entry = net_gethostbyname(name);
-    if (!entry || entry->h_length != sizeof *address || !entry->h_addr_list[0]) {
-        return false;
-    }
-    memcpy(address, entry->h_addr_list[0], sizeof *address);
+    *address = known_address;
     return true;
 }
 
@@ -92,8 +99,4 @@ long http_post(const char *host, const char *path, const char *content_type, con
     }
     net_close(socket);
     return status;
-}
-
-long send_batch(const char *host, const char *json, size_t json_len) {
-    return http_post(host, "/batch/", "application/json", json, json_len);
 }

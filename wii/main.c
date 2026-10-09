@@ -5,34 +5,30 @@
 #include <wiiuse/wpad.h>
 
 #include "events.h"
+#include "http.h"
 #include "nand.h"
 #include "play.h"
 #include "playlog.h"
-#include "send.h"
 #include "settings.h"
 #include "summary.h"
+#include "upload.h"
 
-enum { SESSIONS_PER_REQUEST = 25, CONSOLE_MARGIN = 20 };
-
-/* The debug build runs unattended, so it cannot wait for a button. */
-#ifdef DEBUG_HOST
-enum { SKIP_PROMPT = 1 };
-#else
-enum { SKIP_PROMPT = 0 };
-#endif
+enum { CONSOLE_MARGIN = 20 };
 
 typedef struct {
-    playlog_session pending[SESSIONS_PER_REQUEST];
-    size_t pending_count;
     size_t found;
-    size_t sent;
-    long last_status;
+    playlog_session latest;
+    upload batch;
 } sync_state;
 
 static const events_config CONFIG = {
     .api_key = POSTHOG_API_KEY,
     .utc_offset_minutes = UTC_OFFSET_MINUTES,
 };
+
+static bool has_token(void) {
+    return CONFIG.api_key[0] != '\0';
+}
 
 static void init_console(void) {
     VIDEO_Init();
@@ -53,30 +49,15 @@ static void init_console(void) {
     printf("\x1b[2;0H");
 }
 
-static void flush(sync_state *state) {
-    static char json[EVENTS_JSON_CAP(SESSIONS_PER_REQUEST)];
-    if (state->pending_count == 0 || CONFIG.api_key[0] == '\0') {
-        state->pending_count = 0;
-        return;
-    }
-    size_t json_len = events_batch_json(&CONFIG, state->pending, state->pending_count, json, sizeof json);
-    state->last_status = send_batch(POSTHOG_HOST, json, json_len);
-    if (state->last_status == 200) {
-        state->sent += state->pending_count;
-    }
-    state->pending_count = 0;
-}
-
 static void on_session(void *ctx, const playlog_session *session) {
     sync_state *state = ctx;
-    char line[SESSION_SUMMARY_CAP];
-    session_summary(session, line);
-    printf("  %s\n", line);
-
-    state->found++;
-    state->pending[state->pending_count++] = *session;
-    if (state->pending_count == SESSIONS_PER_REQUEST) {
-        flush(state);
+    /* A line per session would scroll the console once per session, and
+       each scroll moves the whole screen through uncached memory. */
+    if (state->found++ == 0 || session->start_ticks > state->latest.start_ticks) {
+        state->latest = *session;
+    }
+    if (has_token()) {
+        upload_add(&state->batch, session);
     }
 }
 
@@ -89,20 +70,28 @@ static void sync(void) {
     }
 
     static sync_state state;
-    printf("Play history on this console:\n\n");
+    upload_begin(&state.batch, &CONFIG, POSTHOG_HOST, http_post);
+    printf("Reading the play history on this console.\n\n");
     playlog_each_session(image, image_len, on_session, &state);
-    flush(&state);
+    bool delivered = upload_end(&state.batch);
     free(image);
 
-    printf("\nSessions found: %u\n", (unsigned)state.found);
-    if (CONFIG.api_key[0] == '\0') {
+    printf("Sessions found: %u\n", (unsigned)state.found);
+    if (state.found > 0) {
+        char line[SESSION_SUMMARY_CAP];
+        session_summary(&state.latest, line);
+        printf("Latest session: %s\n", line);
+    }
+    if (!has_token()) {
         printf("No project token is set, so nothing was sent.\n");
         return;
     }
-    printf("Sessions sent:  %u\n", (unsigned)state.sent);
+    printf("Sessions sent:  %u\n", (unsigned)state.batch.sent);
     printf("Destination:    %s\n", POSTHOG_HOST);
-    if (state.sent != state.found) {
-        printf("The destination answered %ld. Run the app again to retry.\n", state.last_status);
+    if (!delivered && state.batch.status == 0) {
+        printf("The destination did not answer. Run the app again to retry.\n");
+    } else if (!delivered) {
+        printf("The destination answered %ld. Run the app again to retry.\n", state.batch.status);
     }
 }
 
@@ -122,9 +111,9 @@ int main(void) {
     init_console();
     printf("PostHog for Wii\n\n");
     sync();
-    printf("\nPress A to play with Max. Press HOME to exit.\n");
+    printf("\nPress A to play. Press HOME to exit.\n");
 
-    if (SKIP_PROMPT || wait_for_a_or_home()) {
+    if (wait_for_a_or_home()) {
         play();
     }
     exit(0);

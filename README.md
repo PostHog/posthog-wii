@@ -7,7 +7,7 @@ This project reads those records and sends each play session to a PostHog projec
 
 ## Status
 
-Prototype. The host CLI reads a Message Board dump and sends it. The Wii app does not exist yet.
+Prototype. The host CLI reads a Message Board dump and sends it. The Wii app reads the same data on the console, sends it over plain HTTP, and then runs a small game. It has run only in the Dolphin emulator, never on a real Wii.
 
 ## Use
 

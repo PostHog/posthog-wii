@@ -6,11 +6,11 @@ Two front ends share one C core: a host CLI (`wii2posthog`) and a Wii homebrew a
 ## Commands
 
 - `make` builds `build/wii2posthog`.
-- `make test` builds and runs the core tests under ASan and UBSan.
+- `make test` builds and runs the tests under ASan and UBSan.
 - `build/wii2posthog samples/cdb.vff --dry-run` prints the request bodies without sending.
 - `make wii HOST=http://127.0.0.1:8010 API_KEY=phc_... UTC_OFFSET_MINUTES=-240` cross-compiles the Wii app in Docker to `build/wii/boot.elf`. The three settings are compiled in until the app reads a config file from the SD card.
 - `make dolphin` boots that app in Dolphin with the isolated user folder `.dolphin/`. Its NAND is seeded once from `samples/cdb.vff`.
-- `make shots` builds the debug game, runs its fixed input script in Dolphin, and saves seven frames to `build/shots/`. Read those PNGs to check any drawing change. They are the raw 640-pixel display buffer, so on a 16:9 console the picture looks squeezed sideways.
+- `make shots` builds `build/wii/debug.elf`, runs it in Dolphin, and saves its frames to `build/shots/`. Read those PNGs to check any drawing change. They are the raw 640-pixel display buffer, so on a 16:9 console the picture looks squeezed sideways.
 - `uv run tools/listener.py <dir>` is a local stand-in for PostHog capture. Point `HOST` at `http://127.0.0.1:18010` and read `<dir>/posts.log`.
 
 Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. A `-C` override with an unknown name is ignored without an error.
@@ -19,24 +19,27 @@ Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. A
 
 | Path | Owns |
 | --- | --- |
-| `core/bytes.h` | Bounds-checked big-endian and little-endian reads |
+| `core/bytes.h` | Bounds-checked reads of image data, and big-endian writes |
 | `core/vff.c` | The VFF container and its FAT16 filesystem |
 | `core/playlog.c` | The daily play log record layout |
 | `core/ticks.c` | Wii tick time and its conversion to Unix time |
-| `core/events.c` | The PostHog event model and the `/batch` JSON |
+| `core/events.c` | The PostHog event model and the request body |
+| `core/upload.c` | The request path, how many sessions a request carries, and stopping at the first failure |
 | `core/summary.c` | The one-line text form of a session that both front ends print |
-| `core/send.h` | The one-function sender interface that each front end implements |
-| `host/send_curl.c` | libcurl. No other file includes `curl.h` |
+| `host/http.c` | libcurl. No other file includes `curl.h` |
 | `host/main.c` | Arguments, file reading and output for the CLI |
-| `game/hedgehog.c` | Hedgehog mode: Max's physics, controls, wandering and animation choice. Portable, no drawing |
+| `game/runner.c` | The endless runner: Max's jump, the track, collisions and the score. Portable, no drawing |
+| `game/autoplay.c` | A player that clears every fire, for the tests and the debug build |
 | `wii/nand.c` | ISFS. No other file reads the NAND |
 | `wii/http.c` | Plain HTTP over libogc sockets. No TLS |
 | `wii/gfx.c` | GX. No other file draws |
-| `wii/play.c` | The hedgehog mode loop: Wii Remote input, the room and its colors |
-| `wii/main.c` | Console setup and the sync flow on the Wii |
-| `tools/atlas.py` | Packs the hedgehog frames into one Wii texture |
+| `wii/play.c` | The game loop: Wii Remote input, the scenery and its colors, the score digits |
+| `wii/main.c` | The app's entry point: the text console and the sync flow |
+| `wii/debug.c` | The debug build's entry point: scripted play and frame capture |
+| `tools/atlas.py` | Packs the pictures into one Wii texture |
+| `tools/shots.sh`, `tools/listener.py` | The frame capture run behind `make shots` |
 | `tests/test_core.c` | A synthetic image builder and the core tests |
-| `tests/test_game.c` | The hedgehog mode tests |
+| `tests/test_game.c` | The game tests |
 
 ## Design rules
 
@@ -80,7 +83,9 @@ These follow "A Philosophy of Software Design".
 ## Brand
 
 - Never generate or edit hedgehog art.
-- Max's sprites come from the `@posthog/hedgehog-mode` npm package, fetched into the gitignored `assets/`. `tools/atlas.py` copies frames pixel for pixel. No code tints, redraws or rescales them with smoothing.
+- Max's sprites and the fire come from the `@posthog/hedgehog-mode` npm package, fetched into the gitignored `assets/`. `tools/atlas.py` copies frames pixel for pixel. No code tints, redraws or rescales them with smoothing.
+- The pickups are team crests from `@posthog/brand`, also fetched into `assets/`. They are vector art, so the atlas tool scales them down and changes nothing else.
+- The product icon set `@posthog/icons` is licensed from a third party. Do not use it.
 - `@posthog/brand` assets (hogs, RoundHog) are PolyForm Strict. They stay out of the repository until PostHog's brand team approves a release.
 
 ## Commits

@@ -5,10 +5,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bytes.h"
 #include "sha1.h"
 #include "ticks.h"
 
-enum { UUID_SIZE = 16, LABEL_CAP = 16, DISTINCT_ID_BYTES = 6 };
+enum { UUID_SIZE = 16, UUID_TIME_SIZE = 6, LABEL_CAP = 16, DISTINCT_ID_BYTES = 6 };
 
 /* Changing this value changes every event UUID, so a resend after the
    change duplicates events that are already in PostHog. */
@@ -58,70 +59,72 @@ static void put_json_string(builder *b, const char *text) {
     put_char(b, '"');
 }
 
-static void put_be64(uint8_t *out, uint64_t value) {
-    for (int i = 0; i < 8; i++) {
-        out[i] = (uint8_t)(value >> (56 - 8 * i));
+static void put_hex(builder *b, const uint8_t *data, size_t len) {
+    static const char DIGITS[] = "0123456789abcdef";
+    for (size_t i = 0; i < len; i++) {
+        put_char(b, DIGITS[data[i] >> 4]);
+        put_char(b, DIGITS[data[i] & 0x0F]);
     }
 }
 
 /* The digest covers only fields read from the console, so the same session
-   gets the same IDs whatever UTC offset the user configures. */
+   gets the same digest whatever UTC offset the user configures. */
 static void session_digest(const playlog_session *session, const char *label, uint8_t digest[SHA1_SIZE]) {
     uint8_t name[UUID_SIZE + 8 + 4 + 8 + LABEL_CAP] = {0};
     size_t label_len = strlen(label);
     memcpy(name, UUID_NAMESPACE, UUID_SIZE);
-    put_be64(name + UUID_SIZE, session->console_id);
+    put_be(name + UUID_SIZE, session->console_id, 8);
     memcpy(name + UUID_SIZE + 8, session->game_code, 4);
-    put_be64(name + UUID_SIZE + 12, session->start_ticks);
+    put_be(name + UUID_SIZE + 12, session->start_ticks, 8);
     memcpy(name + UUID_SIZE + 20, label, label_len < LABEL_CAP ? label_len : LABEL_CAP);
     sha1(name, sizeof name, digest);
 }
 
-static void put_uuid(builder *b, const uint8_t uuid[UUID_SIZE]) {
+/* Stamps the version and variant bits on the 16 bytes and writes them. */
+static void put_uuid(builder *b, uint8_t uuid[UUID_SIZE], unsigned version) {
+    uuid[6] = (uint8_t)((uuid[6] & 0x0F) | version << 4);
+    uuid[8] = (uint8_t)((uuid[8] & 0x3F) | 0x80);
     put_char(b, '"');
-    for (int i = 0; i < UUID_SIZE; i++) {
-        if (i == 4 || i == 6 || i == 8 || i == 10) {
-            put_char(b, '-');
-        }
-        putf(b, "%02x", (unsigned)uuid[i]);
-    }
+    put_hex(b, uuid, 4);
+    put_char(b, '-');
+    put_hex(b, uuid + 4, 2);
+    put_char(b, '-');
+    put_hex(b, uuid + 6, 2);
+    put_char(b, '-');
+    put_hex(b, uuid + 8, 2);
+    put_char(b, '-');
+    put_hex(b, uuid + 10, 6);
     put_char(b, '"');
 }
 
 static void put_event_uuid(builder *b, const playlog_session *session, const char *label) {
     uint8_t digest[SHA1_SIZE];
     session_digest(session, label, digest);
-    digest[6] = (uint8_t)((digest[6] & 0x0F) | 0x50);
-    digest[8] = (uint8_t)((digest[8] & 0x3F) | 0x80);
-    put_uuid(b, digest);
+    put_uuid(b, digest, 5);
 }
 
 /* PostHog builds sessions only from UUIDv7 session IDs, and its date
-   filters prune a session whose embedded time is far from its events. The
-   ID therefore carries the session start time. */
-static void put_session_id(builder *b, const playlog_session *session, int64_t start_ms) {
+   filters prune a session whose embedded time is more than three days from
+   its events. The ID carries the session start in console local time, which
+   is within a day of the event time and does not move when the configured
+   UTC offset changes. */
+static void put_session_id(builder *b, const playlog_session *session) {
     uint8_t digest[SHA1_SIZE];
     session_digest(session, "session", digest);
     uint8_t uuid[UUID_SIZE];
-    for (int i = 0; i < 6; i++) {
-        uuid[i] = (uint8_t)(start_ms >> (40 - 8 * i));
-    }
-    memcpy(uuid + 6, digest, UUID_SIZE - 6);
-    uuid[6] = (uint8_t)((uuid[6] & 0x0F) | 0x70);
-    uuid[8] = (uint8_t)((uuid[8] & 0x3F) | 0x80);
-    put_uuid(b, uuid);
+    put_be(uuid, (uint64_t)ticks_to_unix_ms(session->start_ticks, 0), UUID_TIME_SIZE);
+    memcpy(uuid + UUID_TIME_SIZE, digest, UUID_SIZE - UUID_TIME_SIZE);
+    put_uuid(b, uuid, 7);
 }
 
 static void put_distinct_id(builder *b, uint64_t console_id) {
     uint8_t name[UUID_SIZE + 8];
     memcpy(name, UUID_NAMESPACE, UUID_SIZE);
-    put_be64(name + UUID_SIZE, console_id);
+    put_be(name + UUID_SIZE, console_id, 8);
     uint8_t digest[SHA1_SIZE];
     sha1(name, sizeof name, digest);
     put(b, "\"wii-");
-    for (int i = 0; i < DISTINCT_ID_BYTES; i++) {
-        putf(b, "%02x", (unsigned)digest[i]);
-    }
+    put_hex(b, digest, DISTINCT_ID_BYTES);
     put_char(b, '"');
 }
 
@@ -156,10 +159,9 @@ static const char *title_type(char system_code) {
 }
 
 static void put_event(builder *b, const events_config *config, const playlog_session *session, bool ended) {
-    int64_t start_ms = ticks_to_unix_ms(session->start_ticks, config->utc_offset_minutes);
-    int64_t end_ms = ticks_to_unix_ms(session->end_ticks, config->utc_offset_minutes);
+    uint64_t ticks = ended ? session->end_ticks : session->start_ticks;
     char timestamp[ISO_TIME_CAP];
-    unix_ms_to_iso(ended ? end_ms : start_ms, timestamp);
+    unix_ms_to_iso(ticks_to_unix_ms(ticks, config->utc_offset_minutes), timestamp);
 
     put(b, ended ? "{\"event\":\"game ended\"" : "{\"event\":\"game started\"");
     put(b, ",\"distinct_id\":");
@@ -169,7 +171,7 @@ static void put_event(builder *b, const events_config *config, const playlog_ses
     put(b, ",\"uuid\":");
     put_event_uuid(b, session, ended ? "ended" : "started");
     put(b, ",\"properties\":{\"$session_id\":");
-    put_session_id(b, session, start_ms);
+    put_session_id(b, session);
     put(b, ",\"$lib\":\"posthog-wii\",\"$geoip_disable\":true,\"game_code\":");
     put_json_string(b, session->game_code);
     put(b, ",\"maker_code\":");

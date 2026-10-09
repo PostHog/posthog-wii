@@ -114,12 +114,12 @@ void gfx_rect(float x, float y, float width, float height, uint32_t rgb) {
     quad(x, y, width, height, rgb, s, t, s, t);
 }
 
-void gfx_frame(float x, float y, unsigned frame, bool mirrored) {
+void gfx_frame(float x, float y, unsigned frame) {
     float s0 = (float)(frame % ATLAS_COLUMNS * ATLAS_CELL) / ATLAS_WIDTH;
     float t0 = (float)(frame / ATLAS_COLUMNS * ATLAS_CELL) / ATLAS_HEIGHT;
     float s1 = s0 + (float)ATLAS_CELL / ATLAS_WIDTH;
     float t1 = t0 + (float)ATLAS_CELL / ATLAS_HEIGHT;
-    quad(x, y, ATLAS_CELL, ATLAS_CELL, 0xFFFFFF, mirrored ? s1 : s0, t0, mirrored ? s0 : s1, t1);
+    quad(x, y, ATLAS_CELL, ATLAS_CELL, 0xFFFFFF, s0, t0, s1, t1);
 }
 
 void gfx_present(void) {
@@ -134,8 +134,9 @@ void gfx_present(void) {
 
 /* Dolphin writes this buffer to emulated memory only when its graphics hack
    "XFBToTextureEnable" is off. */
-const uint8_t *gfx_displayed(unsigned *width, unsigned *height) {
+const uint8_t *gfx_displayed(unsigned *width, unsigned *height, size_t *len) {
     *width = mode->fbWidth;
     *height = mode->xfbHeight;
+    *len = (size_t)mode->fbWidth * mode->xfbHeight * VI_DISPLAY_PIX_SZ;
     return framebuffers[back_buffer ^ 1];
 }

@@ -20,8 +20,8 @@ enum {
        Smaller VFF volumes use FAT12 and are not read. */
     FAT16_MIN_CLUSTERS = 0xFF5,
     FAT16_MAX_CLUSTERS = 0xFFF5,
-    FAT16_END_OF_CHAIN = 0xFFF8,
-    VISITED_SIZE = FAT16_END_OF_CHAIN / 8 + 1,
+    FIRST_DATA_CLUSTER = 2,
+    VISITED_SIZE = (FAT16_MAX_CLUSTERS + FIRST_DATA_CLUSTER) / 8 + 1,
 
     DIRENT_END = 0x00,
     DIRENT_DELETED = 0xE5,
@@ -35,6 +35,7 @@ typedef struct {
     bytes root;
     size_t data_offset;
     uint32_t cluster_size;
+    uint32_t cluster_end;
     uint8_t *visited;
     uint8_t *scratch;
     size_t scratch_cap;
@@ -51,8 +52,11 @@ static bool volume_open(volume *v, bytes image) {
     if (cluster_size < DIRENT_SIZE) {
         return false;
     }
+    /* A volume that claims more bytes than the image has is rejected whole.
+       Every cluster offset then stays below twice the image size, so the
+       offset arithmetic cannot wrap on the Wii's 32-bit size_t. */
     uint32_t cluster_count = volume_size / cluster_size;
-    if (cluster_count < FAT16_MIN_CLUSTERS || cluster_count >= FAT16_MAX_CLUSTERS) {
+    if (volume_size > image.len || cluster_count < FAT16_MIN_CLUSTERS || cluster_count >= FAT16_MAX_CLUSTERS) {
         return false;
     }
     size_t fat_size = (cluster_count * 2 + cluster_size - 1) / cluster_size * cluster_size;
@@ -63,15 +67,17 @@ static bool volume_open(volume *v, bytes image) {
     v->root = bytes_at(image, root_offset, ROOT_ENTRIES * DIRENT_SIZE);
     v->data_offset = root_offset + ROOT_ENTRIES * DIRENT_SIZE;
     v->cluster_size = cluster_size;
+    v->cluster_end = cluster_count + FIRST_DATA_CLUSTER;
     return v->fat.len != 0;
 }
 
-static bool is_data_cluster(uint32_t cluster) {
-    return cluster >= 2 && cluster < FAT16_END_OF_CHAIN;
+/* A number outside the volume ends a chain, as an end-of-chain mark does. */
+static bool is_data_cluster(const volume *v, uint32_t cluster) {
+    return cluster >= FIRST_DATA_CLUSTER && cluster < v->cluster_end;
 }
 
 static bytes cluster_at(const volume *v, uint32_t cluster) {
-    return bytes_at(v->image, v->data_offset + (size_t)(cluster - 2) * v->cluster_size, v->cluster_size);
+    return bytes_at(v->image, v->data_offset + (size_t)(cluster - FIRST_DATA_CLUSTER) * v->cluster_size, v->cluster_size);
 }
 
 static uint32_t next_cluster(const volume *v, uint32_t cluster) {
@@ -81,7 +87,7 @@ static uint32_t next_cluster(const volume *v, uint32_t cluster) {
 static size_t read_head(const volume *v, uint32_t first_cluster, uint32_t file_size) {
     size_t want = file_size < v->scratch_cap ? file_size : v->scratch_cap;
     size_t got = 0;
-    for (uint32_t cluster = first_cluster; got < want && is_data_cluster(cluster); cluster = next_cluster(v, cluster)) {
+    for (uint32_t cluster = first_cluster; got < want && is_data_cluster(v, cluster); cluster = next_cluster(v, cluster)) {
         bytes chunk = cluster_at(v, cluster);
         if (chunk.len == 0) {
             break;
@@ -133,7 +139,7 @@ static void walk_directory(const volume *v, uint32_t first_cluster, int depth) {
     if (depth > MAX_DEPTH) {
         return;
     }
-    for (uint32_t cluster = first_cluster; is_data_cluster(cluster) && first_visit(v, cluster);
+    for (uint32_t cluster = first_cluster; is_data_cluster(v, cluster) && first_visit(v, cluster);
          cluster = next_cluster(v, cluster)) {
         bytes block = cluster_at(v, cluster);
         if (block.len == 0 || !visit_entries(v, block, depth)) {

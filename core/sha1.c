@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "bytes.h"
+
 enum { BLOCK_SIZE = 64, LENGTH_FIELD_SIZE = 8 };
 
 static uint32_t rotate_left(uint32_t x, int n) {
@@ -10,9 +12,8 @@ static uint32_t rotate_left(uint32_t x, int n) {
 
 static void compress(uint32_t state[5], const uint8_t block[BLOCK_SIZE]) {
     uint32_t w[80];
-    for (int i = 0; i < 16; i++) {
-        const uint8_t *p = block + 4 * i;
-        w[i] = (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+    for (size_t i = 0; i < 16; i++) {
+        w[i] = be32_at((bytes){block, BLOCK_SIZE}, 4 * i);
     }
     for (int i = 16; i < 80; i++) {
         w[i] = rotate_left(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
@@ -61,18 +62,12 @@ void sha1(const uint8_t *data, size_t len, uint8_t out[SHA1_SIZE]) {
     memcpy(tail, data + whole, rest);
     tail[rest] = 0x80;
     size_t tail_len = rest < BLOCK_SIZE - LENGTH_FIELD_SIZE ? BLOCK_SIZE : 2 * BLOCK_SIZE;
-    uint64_t bit_count = (uint64_t)len * 8;
-    for (int i = 0; i < LENGTH_FIELD_SIZE; i++) {
-        tail[tail_len - 1 - (size_t)i] = (uint8_t)(bit_count >> (8 * i));
-    }
+    put_be(tail + tail_len - LENGTH_FIELD_SIZE, (uint64_t)len * 8, LENGTH_FIELD_SIZE);
     for (size_t offset = 0; offset < tail_len; offset += BLOCK_SIZE) {
         compress(state, tail + offset);
     }
 
-    for (int i = 0; i < 5; i++) {
-        out[4 * i] = (uint8_t)(state[i] >> 24);
-        out[4 * i + 1] = (uint8_t)(state[i] >> 16);
-        out[4 * i + 2] = (uint8_t)(state[i] >> 8);
-        out[4 * i + 3] = (uint8_t)state[i];
+    for (size_t i = 0; i < 5; i++) {
+        put_be(out + 4 * i, state[i], 4);
     }
 }

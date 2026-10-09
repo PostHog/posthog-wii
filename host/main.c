@@ -1,14 +1,14 @@
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "events.h"
+#include "http.h"
 #include "playlog.h"
-#include "send.h"
 #include "summary.h"
-
-enum { SESSIONS_PER_REQUEST = 50 };
+#include "upload.h"
 
 typedef struct {
     const char *path;
@@ -30,14 +30,18 @@ static void usage(void) {
           stderr);
 }
 
+/* Accepts exactly a sign, two digits, a colon and two digits. */
 static bool parse_utc_offset(const char *text, int *minutes) {
-    int hours = 0, mins = 0;
-    char sign = 0, end = 0;
-    if (sscanf(text, "%c%2d:%2d%c", &sign, &hours, &mins, &end) != 3 || (sign != '+' && sign != '-') ||
-        hours > 14 || mins > 59) {
+    if (strlen(text) != 6 || (text[0] != '+' && text[0] != '-') || text[3] != ':' || !isdigit((unsigned char)text[1]) ||
+        !isdigit((unsigned char)text[2]) || !isdigit((unsigned char)text[4]) || !isdigit((unsigned char)text[5])) {
         return false;
     }
-    *minutes = (sign == '-' ? -1 : 1) * (hours * 60 + mins);
+    int hours = (text[1] - '0') * 10 + (text[2] - '0');
+    int mins = (text[4] - '0') * 10 + (text[5] - '0');
+    if (hours > 14 || mins > 59) {
+        return false;
+    }
+    *minutes = (text[0] == '-' ? -1 : 1) * (hours * 60 + mins);
     return true;
 }
 
@@ -100,6 +104,16 @@ static int by_start(const void *a, const void *b) {
     return (left > right) - (left < right);
 }
 
+static long print_body(const char *host, const char *path, const char *content_type, const void *body,
+                       size_t body_len) {
+    (void)host;
+    (void)path;
+    (void)content_type;
+    fwrite(body, 1, body_len, stdout);
+    putchar('\n');
+    return UPLOAD_HTTP_OK;
+}
+
 int main(int argc, char **argv) {
     options opts = {0};
     if (!parse_options(argc, argv, &opts)) {
@@ -113,39 +127,35 @@ int main(int argc, char **argv) {
         fprintf(stderr, "wii2posthog: cannot read %s\n", opts.path);
         return 1;
     }
-
     session_list sessions = {0};
     playlog_each_session(image, image_len, collect, &sessions);
     free(image);
     if (sessions.count > 0) {
         qsort(sessions.items, sessions.count, sizeof *sessions.items, by_start);
     }
+
+    events_config config = {
+        .api_key = opts.dry_run ? "phc_dry_run" : opts.api_key,
+        .utc_offset_minutes = opts.utc_offset_minutes,
+    };
+    static upload batch;
+    upload_begin(&batch, &config, opts.host, opts.dry_run ? print_body : http_post);
     for (size_t i = 0; i < sessions.count; i++) {
         char line[SESSION_SUMMARY_CAP];
         session_summary(&sessions.items[i], line);
         fprintf(stderr, "%s\n", line);
+        upload_add(&batch, &sessions.items[i]);
     }
-    fprintf(stderr, "sessions found: %zu\n", sessions.count);
-
-    events_config config = {
-        .api_key = opts.api_key ? opts.api_key : "phc_dry_run",
-        .utc_offset_minutes = opts.utc_offset_minutes,
-    };
-    static char json[EVENTS_JSON_CAP(SESSIONS_PER_REQUEST)];
-    for (size_t sent = 0; sent < sessions.count; sent += SESSIONS_PER_REQUEST) {
-        size_t count = sessions.count - sent < SESSIONS_PER_REQUEST ? sessions.count - sent : SESSIONS_PER_REQUEST;
-        size_t json_len = events_batch_json(&config, sessions.items + sent, count, json, sizeof json);
-        if (opts.dry_run) {
-            puts(json);
-            continue;
-        }
-        long status = send_batch(opts.host, json, json_len);
-        if (status != 200) {
-            fprintf(stderr, "wii2posthog: %s answered %ld after %zu sessions\n", opts.host, status, sent);
-            return 1;
-        }
-        fprintf(stderr, "sent %zu of %zu sessions\n", sent + count, sessions.count);
-    }
+    bool delivered = upload_end(&batch);
     free(sessions.items);
+
+    fprintf(stderr, "sessions found: %zu\n", sessions.count);
+    if (!delivered) {
+        fprintf(stderr, "wii2posthog: %s answered %ld after %zu sessions\n", opts.host, batch.status, batch.sent);
+        return 1;
+    }
+    if (!opts.dry_run) {
+        fprintf(stderr, "sessions sent: %zu\n", batch.sent);
+    }
     return 0;
 }

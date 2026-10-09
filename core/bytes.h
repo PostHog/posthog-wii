@@ -45,4 +45,11 @@ static inline uint32_t le32_at(bytes b, size_t offset) {
     return (uint32_t)le16_at(b, offset + 2) << 16 | le16_at(b, offset);
 }
 
+/* Writes the low size bytes of value, most significant byte first. */
+static inline void put_be(uint8_t *out, uint64_t value, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        out[i] = (uint8_t)(value >> (8 * (size - 1 - i)));
+    }
+}
+
 #endif
