@@ -137,12 +137,14 @@ int main(int argc, char **argv) {
     free(sessions.items);
 
     fprintf(stderr, "sessions found: %zu\n", sessions.count);
-    if (!delivered && batch.status == UPLOAD_NOT_CAPTURE) {
-        fprintf(stderr, "wii2posthog: %s answered, but not as PostHog capture does\n", opts.host);
-        return 1;
-    }
     if (!delivered) {
-        fprintf(stderr, "wii2posthog: %s answered %ld after %zu sessions\n", opts.host, batch.status, batch.sent);
+        if (batch.status == 0) {
+            fprintf(stderr, "wii2posthog: no answer from %s after %zu sessions\n", opts.host, batch.sent);
+        } else if (batch.status == UPLOAD_NOT_CAPTURE) {
+            fprintf(stderr, "wii2posthog: %s answered, but not as PostHog capture does\n", opts.host);
+        } else {
+            fprintf(stderr, "wii2posthog: %s answered %ld after %zu sessions\n", opts.host, batch.status, batch.sent);
+        }
         return 1;
     }
     if (!opts.dry_run) {
