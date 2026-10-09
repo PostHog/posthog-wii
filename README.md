@@ -62,7 +62,7 @@ Messages, photos, Miis and friend names are never read.
 
 ## Safety
 
-- The Wii app cannot write to the console's internal storage. The build replaces the one function that writes a file there, and fails if a binary contains a way around it.
+- The Wii app cannot write to the console's internal storage. The build replaces the one function that writes a file there, and fails if a binary contains a way around it. The console's own system software still records each title it starts, as it does for every game.
 - It installs nothing on the console: no channel, no WAD, no IOS. It runs from the SD card.
 
 ## Limits

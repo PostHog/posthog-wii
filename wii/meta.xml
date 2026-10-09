@@ -8,7 +8,7 @@
 
 Put your host and project token in apps/posthog-wii/settings.txt on the SD card.
 
-The app changes nothing on the console.
+The app writes nothing to the console's own storage.
 
 A, B, Up or 2 jumps. HOME exits.</long_description>
 </app>
