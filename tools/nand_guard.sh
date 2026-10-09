@@ -15,9 +15,14 @@ if grep -nE '\bIOS_[A-Za-z]+ *\(|ISFS_OPEN_(WRITE|RW)' "$(dirname "$0")"/../wii/
 fi
 
 for elf in "$@"; do
+    # A failed nm stops the script here. Inside the pipeline below it would read as a clean binary.
+    symbols=$(powerpc-eabi-nm --defined-only "$elf" | awk '{print $3}')
+    if ! grep -qx main <<< "$symbols"; then
+        echo "nand_guard: $elf has no symbol table to check" >&2
+        exit 1
+    fi
     # The linker drops each function that nothing calls, so the binary can reach every function it contains.
-    found=$(powerpc-eabi-nm --defined-only "$elf" | awk '{print $3}' |
-        grep -E '^(IOS_Write(Async)?|ISFS_.*|ES_.*)$' | grep -vE "$allowed" || true)
+    found=$(grep -E '^(IOS_Write(Async)?|ISFS_.*|ES_.*)$' <<< "$symbols" | grep -vE "$allowed" || true)
     if [[ -n $found ]]; then
         echo "nand_guard: $elf contains" $found >&2
         failed=1
