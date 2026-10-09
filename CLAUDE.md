@@ -8,14 +8,14 @@ Two front ends share one C core: a host CLI (`wii2posthog`) and a Wii homebrew a
 - `make` builds `build/wii2posthog`.
 - `make test` builds and runs the tests under ASan and UBSan.
 - `build/wii2posthog samples/cdb.vff --dry-run` prints the request bodies without sending.
-- `make wii` cross-compiles the Wii app in Docker to `build/wii/boot.elf` and `boot.dol`, then runs `tools/nand_guard.sh` on the result.
+- `make wii` cross-compiles the Wii app in Docker to `build/wii/boot.elf` and `boot.dol`, then runs `tools/nand_guard.sh` on the result. The first run downloads mbedTLS into `assets/` and checks its hash.
 - `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_... UTC_OFFSET=-04:00` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the three values to the settings file on Dolphin's SD card. Its NAND is seeded once from `samples/cdb.vff`.
 - `make shots` builds `build/wii/debug.elf`, runs it in Dolphin, and saves its frames to `build/shots/`. Read those PNGs to check any drawing change. They are the raw 640-pixel display buffer, so on a 16:9 console the picture looks squeezed sideways.
 - `uv run tools/listener.py <dir>` is a local stand-in for PostHog capture. Point `HOST` at `http://127.0.0.1:18010` and read `<dir>/posts.log`.
 
 Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. A `-C` override with an unknown name is ignored without an error.
 
-A local PostHog dev stack has two capture addresses. The proxy on port 8010 listens on loopback only and routes only the host name `localhost`: for any other name, an IP address included, it answers 200 with an empty body and drops the request. Capture itself listens on port 3307 on every interface and answers `{"status":"Ok"}`, so a console on the network uses `http://<computer address>:3307`.
+A local PostHog dev stack has two capture addresses. The proxy on port 8010 listens on loopback only and routes only the host name `localhost`. For any other name, an IP address included, it answers 200 with an empty body and drops the request. Capture itself listens on port 3307 on every interface and answers `{"status":"Ok"}`, so a console on the network uses `http://<computer address>:3307`.
 
 ## Layout
 
@@ -36,7 +36,11 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `wii/nand.c` | ISFS. No other file reads the NAND |
 | `wii/readonly.c` | The replacement for `IOS_Write`, linked into every Wii binary |
 | `wii/sdcard.c` | libfat. No other file reads the SD card, and the card is mounted read-only |
-| `wii/http.c` | Plain HTTP over libogc sockets. No TLS |
+| `wii/http.c` | HTTP over libogc sockets, and the choice between plain and TLS from the host's scheme |
+| `wii/tls.c` | mbedTLS. No other file includes an mbedTLS header |
+| `wii/tls_config.h` | The changes to mbedTLS's default configuration |
+| `wii/roots.pem` | The root certificates every build trusts: Amazon Root CA 1, which signs PostHog Cloud |
+| `wii/noise.c` | The readings that seed the TLS random number generator |
 | `wii/gfx.c` | GX. No other file draws |
 | `wii/play.c` | The game loop: Wii Remote input, the scenery and its colors, the score digits |
 | `wii/main.c` | The app's entry point: the text console and the sync flow |
@@ -72,17 +76,22 @@ These follow "A Philosophy of Software Design".
 - No statement of the project's current state, in code or in a document: "not built yet", "never run on a console", "for now". It turns false without a diff that touches it. Write the rule or the fact that stays true.
 - A comment states a reason the code cannot show, a consequence in another file, or the source of a format fact.
 - No narration of what a line does, no change history, no mention of a conversation or a review, no em dashes.
-- A header comment describes the contract of a public function: what the caller gets and in which units.
+- A header comment gives the part of a function's contract that its signature cannot: units, ownership, what a failure returns.
+- A rule about which file may do what goes in this document, not in a comment.
+- Write whole, plain sentences. No colon or semicolon to join two thoughts, no figure of speech.
 
 ## Safety and privacy
 
-A user's console must still start after any run of this software. This outranks every feature.
+A user's console must still start after any run of this software. This rule comes before any feature.
 
-- **No binary writes to the console's internal storage (the NAND).** libogc 2.13 writes it without being asked: `WPAD_Init` and every exit save the Wii Remote list to `/shared2/sys/SYSCONF`, and a return to the Wii Menu writes `state.dat` and `NANDBOOTINFO`. `wii/readonly.c` replaces `IOS_Write` for the whole binary. `tools/nand_guard.sh` fails the build when a binary contains `IOS_Write`, or an ISFS or ES function that is not on its read-only list.
+- **No binary writes to the console's internal storage (the NAND).** libogc 2.13 writes it on its own. `WPAD_Init` and every exit save the Wii Remote list to `/shared2/sys/SYSCONF`, and a return to the Wii Menu writes `state.dat` and `NANDBOOTINFO`. `wii/readonly.c` replaces `IOS_Write` for the whole binary. `tools/nand_guard.sh` fails the build when a binary contains `IOS_Write`, or an ISFS or ES function that is not on its read-only list.
 - **Only `wii/nand.c` opens a NAND file, and only with `ISFS_OPEN_READ`.** No file under `wii/` calls an `IOS_` function. The guard checks both.
-- **A change of `DEVKIT_IMAGE` needs a new read of libogc's write paths:** `libogc/conf.c`, `libogc/wiilaunch.c` and `wiiuse/wpad.c`. A write that goes through an ioctl passes the guard.
+- **A change of `DEVKIT_IMAGE` needs a new read of libogc's write paths.** They are `libogc/conf.c`, `libogc/wiilaunch.c` and `wiiuse/wpad.c`. A write that goes through an ioctl passes the guard.
 - **The project builds no WAD and installs nothing on the console.** The app runs from the SD card through the Homebrew Channel. A channel banner that the Wii Menu cannot parse stops the menu from starting. No tool proves a banner safe, and a banner that renders in Dolphin can still fail on a console.
-- **Dolphin proves drawing and logic, nothing else.** It grants every file access, skips IOS patches and reports the network as connected. Do not claim support for a console type (Wii, Wii mini, Wii U) before a run on that type.
+- **A run in Dolphin shows only that drawing and logic work.** Dolphin grants every file access, skips IOS patches and reports the network as connected. Do not claim support for a console type (Wii, Wii mini, Wii U) before a run on that type.
+- **An `https://` connection always checks the certificate chain and the host name.** Never set `MBEDTLS_SSL_VERIFY_NONE` or `MBEDTLS_SSL_VERIFY_OPTIONAL`, and never add a setting that skips the check.
+- **A new mbedTLS version changes `MBEDTLS_VERSION` and `MBEDTLS_SHA256` together.** Take the hash from the release page, not from the download.
+- **The TLS keys are only as unpredictable as the readings in `wii/noise.c`.** A Wii gives an app no random number source. Add a source there. Do not remove one.
 - `samples/` and `*.vff` are never committed. A dump holds the owner's messages, photos and a console ID.
 - Committed fixtures are synthetic. Do not derive one from a real dump.
 - `playlog.c` never parses the sent-message buffer that follows the sessions. It holds friend names.

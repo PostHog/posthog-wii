@@ -12,7 +12,7 @@ This project reads those records and sends each play session to a PostHog projec
 
 ## Use
 
-1. On a Wii with the Homebrew Channel, run [cdbackup](https://oscwii.org/library/app/cdbackup) and choose Backup. It writes `cdbackup.vff` to the SD card. Do not choose Restore or Delete: both change the Message Board file on the console.
+1. On a Wii with the Homebrew Channel, run [cdbackup](https://oscwii.org/library/app/cdbackup) and choose Backup. It writes `cdbackup.vff` to the SD card. Do not choose Restore or Delete. Both change the Message Board file on the console.
 2. Build the CLI: `make`.
 3. Check what it found:
 
@@ -33,12 +33,14 @@ The Wii stores local time without a time zone, so `--utc-offset` is the offset o
 The Wii app reads `apps/posthog-wii/settings.txt` from the SD card:
 
 ```
-host = http://192.168.1.20:3307
+host = https://us.i.posthog.com
 api_key = phc_...
 utc_offset = -04:00
 ```
 
-Without a host and a project token it sends nothing. It sends over plain HTTP, so `host` must start with `http://`.
+- `host` starts with `https://` or `http://`. Without a host and a project token the app sends nothing.
+- For an `https://` host the app checks the server's certificate. It trusts Amazon Root CA 1, which signs PostHog Cloud. For a host with another certificate authority, put that authority's root certificate, as PEM text, in `apps/posthog-wii/roots.pem`.
+- The certificate check needs the console's date to be right.
 
 ## What is sent
 

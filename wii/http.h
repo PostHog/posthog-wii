@@ -3,8 +3,9 @@
 
 #include <stddef.h>
 
-/* POSTs body to "http://name[:port]" plus path. Returns the HTTP status, or
-   0 when no response arrived. Plain HTTP only. */
+/* POSTs body to host plus path. host is "http://name[:port]" or
+   "https://name[:port]". Returns the HTTP status, or 0 when no response
+   arrived or an https host failed its certificate check. */
 long http_post(const char *host, const char *path, const char *content_type, const void *body, size_t body_len);
 
 #endif

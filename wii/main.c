@@ -12,6 +12,7 @@
 #include "sdcard.h"
 #include "settings.h"
 #include "summary.h"
+#include "tls.h"
 #include "upload.h"
 
 enum { CONSOLE_MARGIN = 20 };
@@ -57,6 +58,7 @@ static void on_session(void *ctx, const playlog_session *session) {
 static void sync(void) {
     static settings config;
     sdcard_read_settings(&config);
+    tls_set_utc_offset(config.utc_offset_minutes);
 
     size_t image_len = 0;
     uint8_t *image = nand_read_message_board(&image_len);
@@ -87,7 +89,7 @@ static void sync(void) {
     printf("Sessions sent:  %u\n", (unsigned)state.batch.sent);
     printf("Destination:    %s\n", config.host);
     if (!delivered && state.batch.status == 0) {
-        printf("The destination did not answer. Run the app again to retry.\n");
+        printf("Could not reach the destination. For an https host, check that\nthe console's date is right.\n");
     } else if (!delivered) {
         printf("The destination answered %ld. Run the app again to retry.\n", state.batch.status);
     }

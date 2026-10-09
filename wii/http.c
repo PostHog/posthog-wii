@@ -8,10 +8,23 @@
 
 #include <network.h>
 
-/* Plain HTTP over libogc sockets. PostHog Cloud needs TLS, which this
-   file does not have. */
+#include "tls.h"
 
-enum { NAME_CAP = 64, HEADER_CAP = 320, RESPONSE_CAP = 64, RETRY_DELAY_US = 100000, NETWORK_TRIES = 150 };
+enum {
+    SCHEME_CAP = 6,
+    NAME_CAP = 64,
+    HEADER_CAP = 320,
+    RESPONSE_CAP = 64,
+    RETRY_DELAY_US = 100000,
+    NETWORK_TRIES = 150,
+    HTTP_PORT = 80,
+    HTTPS_PORT = 443,
+};
+
+typedef struct {
+    s32 socket;
+    bool secure;
+} connection;
 
 /* A console with no usable network, such as a Wii mini or one whose router
    it cannot join, must not hang here, so the number of tries is bounded. */
@@ -50,9 +63,10 @@ static bool resolve(const char *name, struct in_addr *address) {
     return true;
 }
 
-static bool write_all(s32 socket, const char *data, size_t len) {
+static bool write_all(const connection *link, const char *data, size_t len) {
     for (size_t sent = 0; sent < len;) {
-        s32 n = net_send(socket, data + sent, (s32)(len - sent), 0);
+        int n = link->secure ? tls_send(data + sent, (int)(len - sent))
+                             : net_send(link->socket, data + sent, (s32)(len - sent), 0);
         if (n <= 0) {
             return false;
         }
@@ -61,23 +75,35 @@ static bool write_all(s32 socket, const char *data, size_t len) {
     return true;
 }
 
+static int read_some(const connection *link, char *data, int len) {
+    return link->secure ? tls_recv(data, len) : net_recv(link->socket, data, len, 0);
+}
+
 long http_post(const char *host, const char *path, const char *content_type, const void *body, size_t body_len) {
+    char scheme[SCHEME_CAP];
     char name[NAME_CAP];
-    unsigned port = 80;
-    if (sscanf(host, "http://%63[^:/]:%u", name, &port) < 1 || !network_ready()) {
+    unsigned port = 0;
+    if (sscanf(host, "%5[a-z]://%63[^:/]:%u", scheme, name, &port) < 2) {
         return 0;
+    }
+    connection link = {.secure = strcmp(scheme, "https") == 0};
+    if (!link.secure && strcmp(scheme, "http") != 0) {
+        return 0;
+    }
+    if (port == 0) {
+        port = link.secure ? HTTPS_PORT : HTTP_PORT;
     }
 
     struct sockaddr_in address = {0};
     address.sin_len = sizeof address;
     address.sin_family = AF_INET;
     address.sin_port = htons((u16)port);
-    if (!resolve(name, &address.sin_addr)) {
+    if (!network_ready() || !resolve(name, &address.sin_addr)) {
         return 0;
     }
 
-    s32 socket = net_socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    if (socket < 0) {
+    link.socket = net_socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (link.socket < 0) {
         return 0;
     }
 
@@ -92,11 +118,16 @@ long http_post(const char *host, const char *path, const char *content_type, con
 
     long status = 0;
     char response[RESPONSE_CAP] = {0};
-    if (header_len < (int)sizeof header && net_connect(socket, (struct sockaddr *)&address, sizeof address) >= 0 &&
-        write_all(socket, header, (size_t)header_len) && write_all(socket, body, body_len) &&
-        net_recv(socket, response, sizeof response - 1, 0) > 0) {
-        sscanf(response, "HTTP/%*s %ld", &status);
+    if (header_len < (int)sizeof header && net_connect(link.socket, (struct sockaddr *)&address, sizeof address) >= 0 &&
+        (!link.secure || tls_open(link.socket, name))) {
+        if (write_all(&link, header, (size_t)header_len) && write_all(&link, body, body_len) &&
+            read_some(&link, response, sizeof response - 1) > 0) {
+            sscanf(response, "HTTP/%*s %ld", &status);
+        }
+        if (link.secure) {
+            tls_close();
+        }
     }
-    net_close(socket);
+    net_close(link.socket);
     return status;
 }
