@@ -101,7 +101,7 @@ static void draw_number(float right, float y, uint32_t value, uint32_t rgb) {
     } while (value > 0);
 }
 
-typedef enum { SKYLINE_BARS, SKYLINE_FUNNEL, SKYLINE_TREND, SKYLINE_TABLE, SKYLINE_KINDS } skyline_kind;
+enum { SKYLINE_BARS, SKYLINE_FUNNEL, SKYLINE_TREND, SKYLINE_TABLE, SKYLINE_KINDS };
 
 typedef void column_fn(float x, unsigned index);
 
@@ -195,14 +195,14 @@ static void draw(const runner *game, float width, unsigned tick) {
     }
 }
 
-static bool wiimote_jump(void) {
+static bool wiimote_jump(const runner *game, unsigned tick) {
+    (void)game;
+    (void)tick;
     return (WPAD_ButtonsHeld(WPAD_CHAN_0) & (WPAD_BUTTON_A | WPAD_BUTTON_B | WPAD_BUTTON_UP | WPAD_BUTTON_2)) != 0;
 }
 
-/* A NULL jump reads the Wii Remote. A NULL shown is not called. */
-static void loop(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
-    gfx_init();
-    float width = gfx_width();
+void play_scripted(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
+    float width = gfx_init();
 
     runner game;
     runner_init(&game, width, GROUND_Y, seed);
@@ -212,7 +212,7 @@ static void loop(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
         if (WPAD_ButtonsDown(WPAD_CHAN_0) & WPAD_BUTTON_HOME) {
             return;
         }
-        runner_step(&game, jump ? jump(&game, tick) : wiimote_jump());
+        runner_step(&game, jump(&game, tick));
         draw(&game, width, tick);
         gfx_present();
         if (shown) {
@@ -222,9 +222,5 @@ static void loop(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
 }
 
 void play(void) {
-    loop((uint32_t)gettime(), NULL, NULL);
-}
-
-void play_scripted(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
-    loop(seed, jump, shown);
+    play_scripted((uint32_t)gettime(), wiimote_jump, NULL);
 }

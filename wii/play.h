@@ -18,7 +18,8 @@ typedef bool play_jump_fn(const runner *game, unsigned tick);
 /* Called after the frame for a tick is on screen. */
 typedef void play_shown_fn(unsigned tick);
 
-/* The game on the track that seed picks, with jump deciding the button. */
+/* The game on the track that seed picks, with jump deciding the button.
+   shown can be NULL. */
 void play_scripted(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown);
 
 #endif

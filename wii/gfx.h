@@ -9,10 +9,8 @@
    square on both. */
 enum { GFX_HEIGHT = 480 };
 
-/* Takes over the display from the text console. */
-void gfx_init(void);
-
-float gfx_width(void);
+/* Takes over the display from the text console. Returns the canvas width. */
+float gfx_init(void);
 
 void gfx_rect(float x, float y, float width, float height, uint32_t rgb);
 

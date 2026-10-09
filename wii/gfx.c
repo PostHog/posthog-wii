@@ -17,7 +17,6 @@ static GXRModeObj *mode;
 static void *framebuffers[2];
 static int back_buffer;
 static GXTexObj atlas;
-static float canvas_width;
 
 static void vertex(float x, float y, uint32_t rgb, float s, float t) {
     GX_Position2f32(x, y);
@@ -34,7 +33,7 @@ static void quad(float x, float y, float width, float height, uint32_t rgb, floa
     GX_End();
 }
 
-void gfx_init(void) {
+float gfx_init(void) {
     mode = VIDEO_GetPreferredMode(NULL);
     framebuffers[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(mode));
     framebuffers[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(mode));
@@ -93,18 +92,15 @@ void gfx_init(void) {
 
     /* A 16:9 console stretches the 640-pixel frame sideways on the TV. The
        wider canvas squeezes the drawing by the same factor first. */
-    canvas_width = CONF_GetAspectRatio() == CONF_ASPECT_16_9 ? 854 : 640;
+    float width = CONF_GetAspectRatio() == CONF_ASPECT_16_9 ? 854 : 640;
     Mtx44 projection;
-    guOrtho(projection, 0, GFX_HEIGHT, 0, canvas_width, 0, 300);
+    guOrtho(projection, 0, GFX_HEIGHT, 0, width, 0, 300);
     GX_LoadProjectionMtx(projection, GX_ORTHOGRAPHIC);
     Mtx view;
     guMtxIdentity(view);
     guMtxTransApply(view, view, 0, 0, -5);
     GX_LoadPosMtxImm(view, GX_PNMTX0);
-}
-
-float gfx_width(void) {
-    return canvas_width;
+    return width;
 }
 
 void gfx_rect(float x, float y, float width, float height, uint32_t rgb) {
