@@ -71,4 +71,8 @@ Messages, photos, Miis and friend names are never read.
 - It records only what is launched from the Wii Menu.
 - It keeps 10 sessions per day. Later sessions that day lose their title and are skipped.
 
+## License
+
+MIT. See `LICENSE`. The pictures that the build downloads from `@posthog/hedgehog-mode` and `@posthog/brand` keep their own licenses.
+
 Not affiliated with Nintendo.
