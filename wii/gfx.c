@@ -113,12 +113,13 @@ void gfx_rect(float x, float y, float width, float height, uint32_t rgb) {
     quad(x, y, width, height, rgb, s, t, s, t);
 }
 
-void gfx_frame(float x, float y, unsigned frame) {
+void gfx_frame(float x, float y, unsigned frame, unsigned scale) {
     float s0 = (float)(frame % ATLAS_COLUMNS * ATLAS_CELL) / ATLAS_WIDTH;
     float t0 = (float)(frame / ATLAS_COLUMNS * ATLAS_CELL) / ATLAS_HEIGHT;
     float s1 = s0 + (float)ATLAS_CELL / ATLAS_WIDTH;
     float t1 = t0 + (float)ATLAS_CELL / ATLAS_HEIGHT;
-    quad(x, y, ATLAS_CELL, ATLAS_CELL, 0xFFFFFF, s0, t0, s1, t1);
+    float size = (float)(ATLAS_CELL * scale);
+    quad(x, y, size, size, 0xFFFFFF, s0, t0, s1, t1);
 }
 
 void gfx_present(void) {

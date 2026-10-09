@@ -10,6 +10,7 @@
 /* Colors from PostHog's product UI. */
 enum {
     COLOR_PAGE = 0xF3F4EF,
+    COLOR_FAR = 0xEEEFE9,
     COLOR_BARS = 0xE8E9E2,
     COLOR_GROUND = 0xDADBD2,
     COLOR_MUTED = 0xABAD9F,
@@ -25,6 +26,26 @@ enum {
     BAR_MIN_HEIGHT = 40,
     BAR_HEIGHT_RANGE = 150,
     BAR_SCROLL_DIVISOR = 4,
+
+    /* The near skyline changes its kind of chart every CHAPTER_BARS bars. */
+    CHAPTER_BARS = 18,
+    FUNNEL_STEPS = 6,
+    TREND_WOBBLE = 24,
+    TABLE_ROWS = 6,
+    TABLE_PITCH = BAR_WIDTH + 4,
+
+    FAR_PITCH = 24,
+    FAR_WIDTH = 14,
+    FAR_MIN_HEIGHT = 120,
+    FAR_HEIGHT_RANGE = 130,
+    FAR_SCROLL_DIVISOR = 8,
+
+    /* Distances are pixels of track. Hogzilla enters once per lap. */
+    HOGZILLA_SCALE = 4,
+    HOGZILLA_LAP = 20000,
+    HOGZILLA_ENTERS_AT = 4000,
+    HOGZILLA_SCROLL_DIVISOR = 6,
+    HOGZILLA_TICKS_PER_FRAME = 6,
 
     DASH_PITCH = 64,
     DASH_WIDTH = 18,
@@ -80,15 +101,59 @@ static void draw_number(float right, float y, uint32_t value, uint32_t rgb) {
     } while (value > 0);
 }
 
-/* A bar chart on the horizon that scrolls slower than the ground. A bar
-   keeps its height as it moves because the height comes from its number. */
-static void draw_bars(const runner *game, float width) {
-    unsigned scrolled = (unsigned)game->distance / BAR_SCROLL_DIVISOR;
-    unsigned first = scrolled / BAR_PITCH;
-    for (unsigned i = 0; (float)(i * BAR_PITCH) < width + BAR_PITCH; i++) {
-        unsigned height = BAR_MIN_HEIGHT + (first + i) * HASH_MULTIPLIER % BAR_HEIGHT_RANGE;
-        gfx_rect((float)(i * BAR_PITCH) - (float)(scrolled % BAR_PITCH), (float)(GROUND_Y - height), BAR_WIDTH,
-                 (float)height, COLOR_BARS);
+typedef enum { SKYLINE_BARS, SKYLINE_FUNNEL, SKYLINE_TREND, SKYLINE_TABLE, SKYLINE_KINDS } skyline_kind;
+
+typedef void column_fn(float x, unsigned index);
+
+/* Draws a row of columns that scrolls slower than the ground. A column
+   looks the same as it moves because its shape comes from its index. */
+static void draw_columns(const runner *game, float width, unsigned scroll_divisor, unsigned pitch, column_fn *column) {
+    unsigned scrolled = (unsigned)game->distance / scroll_divisor;
+    unsigned first = scrolled / pitch;
+    for (unsigned i = 0; (float)(i * pitch) < width + (float)pitch; i++) {
+        column((float)(i * pitch) - (float)(scrolled % pitch), first + i);
+    }
+}
+
+static void far_column(float x, unsigned index) {
+    unsigned height = FAR_MIN_HEIGHT + index * HASH_MULTIPLIER % FAR_HEIGHT_RANGE;
+    gfx_rect(x, (float)(GROUND_Y - height), FAR_WIDTH, (float)height, COLOR_FAR);
+}
+
+/* The run starts in a bar chart, because chapter 0 hashes to SKYLINE_BARS. */
+static void near_column(float x, unsigned index) {
+    unsigned place = index % CHAPTER_BARS;
+    unsigned noise = index * HASH_MULTIPLIER % BAR_HEIGHT_RANGE;
+    unsigned height = BAR_MIN_HEIGHT + noise;
+    switch (((index / CHAPTER_BARS) * HASH_MULTIPLIER >> 16) % SKYLINE_KINDS) {
+    case SKYLINE_FUNNEL:
+        height = BAR_MIN_HEIGHT + BAR_HEIGHT_RANGE - place % FUNNEL_STEPS * (BAR_HEIGHT_RANGE / FUNNEL_STEPS);
+        break;
+    case SKYLINE_TREND:
+        height = BAR_MIN_HEIGHT + place * BAR_HEIGHT_RANGE / CHAPTER_BARS + noise % TREND_WOBBLE;
+        break;
+    case SKYLINE_TABLE:
+        for (unsigned row = 0; row < TABLE_ROWS - place % TABLE_ROWS; row++) {
+            gfx_rect(x, (float)(GROUND_Y - (row + 1) * TABLE_PITCH), BAR_WIDTH, BAR_WIDTH, COLOR_BARS);
+        }
+        return;
+    default:
+        break;
+    }
+    gfx_rect(x, (float)(GROUND_Y - height), BAR_WIDTH, (float)height, COLOR_BARS);
+}
+
+/* Hogzilla walks the way Max runs, but slower, so he drifts from the right
+   edge to the left one. */
+static void draw_hogzilla(const runner *game, float width, unsigned tick) {
+    unsigned into_lap = (unsigned)game->distance % HOGZILLA_LAP;
+    if (into_lap < HOGZILLA_ENTERS_AT) {
+        return;
+    }
+    float x = width - (float)(into_lap - HOGZILLA_ENTERS_AT) / HOGZILLA_SCROLL_DIVISOR;
+    if (x > -(float)(ATLAS_CELL * HOGZILLA_SCALE)) {
+        gfx_frame(x, (float)(GROUND_Y - RUNNER_MAX_FEET * HOGZILLA_SCALE),
+                  ATLAS_HOGZILLA_FIRST + tick / HOGZILLA_TICKS_PER_FRAME % ATLAS_HOGZILLA_COUNT, HOGZILLA_SCALE);
     }
 }
 
@@ -109,13 +174,15 @@ static unsigned item_frame(const runner_item *item, unsigned tick) {
 
 static void draw(const runner *game, float width, unsigned tick) {
     gfx_rect(0, 0, width, GFX_HEIGHT, COLOR_PAGE);
-    draw_bars(game, width);
+    draw_columns(game, width, FAR_SCROLL_DIVISOR, FAR_PITCH, far_column);
+    draw_hogzilla(game, width, tick);
+    draw_columns(game, width, BAR_SCROLL_DIVISOR, BAR_PITCH, near_column);
     draw_ground(game, width);
     for (size_t i = 0; i < game->item_count; i++) {
-        gfx_frame(game->items[i].x, game->items[i].y, item_frame(&game->items[i], tick));
+        gfx_frame(game->items[i].x, game->items[i].y, item_frame(&game->items[i], tick), 1);
     }
     gfx_frame(RUNNER_MAX_X, game->max_y,
-              MAX_FRAMES[game->animation].first + runner_frame(game, MAX_FRAMES[game->animation].count));
+              MAX_FRAMES[game->animation].first + runner_frame(game, MAX_FRAMES[game->animation].count), 1);
 
     /* Max's sprite has a light gray contact shadow under the feet, made for
        a white page. The ground line is drawn after him so the shadow never

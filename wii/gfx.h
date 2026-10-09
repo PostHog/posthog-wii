@@ -16,8 +16,9 @@ float gfx_width(void);
 
 void gfx_rect(float x, float y, float width, float height, uint32_t rgb);
 
-/* Draws one cell of the sprite atlas with its top-left corner at x, y. */
-void gfx_frame(float x, float y, unsigned frame);
+/* Draws one cell of the sprite atlas with its top-left corner at x, y, at
+   scale times its size. Each sprite pixel stays a square. */
+void gfx_frame(float x, float y, unsigned frame, unsigned scale);
 
 /* Shows what was drawn since the last call and waits for the next frame. */
 void gfx_present(void);

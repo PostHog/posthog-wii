@@ -118,6 +118,7 @@ Sources: WiiBrew (`Brick`, `/dev/fs`, `/dev/es`, `Hardware/NAND`), HackMii, wii.
 
 - Never generate or edit hedgehog art.
 - Max's sprites and the fire come from the `@posthog/hedgehog-mode` npm package, fetched into the gitignored `assets/`. `tools/atlas.py` copies frames pixel for pixel. No code tints, redraws or rescales them with smoothing.
+- Hogzilla is that package's `hogzilla` skin. The game draws him at a whole multiple of his size, so each sprite pixel stays a square.
 - The pickups are team crests from `@posthog/brand`, also fetched into `assets/`. They are vector art, so the atlas tool scales them down and changes nothing else.
 - The product icon set `@posthog/icons` is licensed from a third party. Do not use it.
 - `@posthog/brand` assets (hogs, RoundHog) are PolyForm Strict. They stay out of the repository until PostHog's brand team approves a release.

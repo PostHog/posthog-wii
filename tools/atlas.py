@@ -45,6 +45,7 @@ def main(source: Path, crests: Path, output: Path) -> None:
 
     groups: dict[str, list[str]] = {name: animations[f"skins/default/{name}/tile"] for name in HEDGEHOG_ANIMATIONS}
     groups["fire"] = animations["overlays/fire/tile"]
+    groups["hogzilla"] = animations["skins/hogzilla/walk/tile"]
 
     cells: list[Image.Image] = []
     constants: list[str] = []
