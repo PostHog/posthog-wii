@@ -47,7 +47,7 @@ utc_offset = -04:00
 ```
 
 - `host` starts with `https://` or `http://`. Without a host and a project token the app sends nothing.
-- For an `https://` host the app checks the server's certificate. It trusts Amazon Root CA 1, which signs PostHog Cloud. For a host with another certificate authority, put that authority's root certificate, as PEM text, in `apps/posthog-wii/roots.pem`.
+- For an `https://` host the app checks the server's certificate. It trusts the five root certificates of Amazon Trust Services, which signs PostHog Cloud. For a host with another certificate authority, put that authority's root certificate, as PEM text, in `apps/posthog-wii/roots.pem`.
 - The certificate check needs the console's date to be right.
 - An `https://` host also needs `apps/posthog-wii/seed.bin`, which `make sd` writes. A Wii has no source of random numbers, so the keys of a secure connection start from random bytes that the computer made. The app replaces the file on each run that sends over https.
 

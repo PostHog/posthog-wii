@@ -42,7 +42,7 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `wii/http.c` | The HTTP request and response, and the choice between plain and TLS from the host's scheme |
 | `wii/tls.c` | mbedTLS. No other file includes an mbedTLS header |
 | `wii/tls_config.h` | The changes to mbedTLS's default configuration |
-| `wii/roots.pem` | The root certificates every build trusts: Amazon Root CA 1, which signs PostHog Cloud |
+| `wii/roots.pem` | The root certificates every build trusts: Amazon Root CA 1 to 4 and Starfield Services Root CA G2. Amazon signs PostHog Cloud and asks a client with its own trust list to hold all five (https://www.amazontrust.com/repository/) |
 | `wii/noise.c` | The readings that the TLS random number generator mixes with its seed file |
 | `wii/gfx.c` | GX. No other file draws |
 | `wii/play.c` | The game loop: Wii Remote input, the scenery and its colors, the score digits |
