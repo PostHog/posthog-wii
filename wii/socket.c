@@ -7,8 +7,18 @@
 #include <unistd.h>
 
 #include <network.h>
+#include <ogc/lwp_watchdog.h>
 
-enum { NAME_CAP = 64, FAILURE_CAP = 64, RETRY_DELAY_US = 100000, NETWORK_TRIES = 150, SEND_PIECE = 4096 };
+/* NETWORK_WAIT_MS is longer than the waits libogc makes for an address, so
+   a start that libogc would finish is never stopped. */
+enum {
+    NAME_CAP = 64,
+    FAILURE_CAP = 64,
+    RETRY_DELAY_US = 100000,
+    CONNECT_DELAY_US = 20000,
+    NETWORK_WAIT_MS = 30000,
+    SEND_PIECE = 4096,
+};
 
 static char failure[FAILURE_CAP];
 
@@ -16,25 +26,43 @@ static void fail(const char *what, s32 error) {
     snprintf(failure, sizeof failure, "%s (error %d).", what, (int)error);
 }
 
-/* A console with no usable network, such as a Wii mini or one whose router
-   it cannot join, must not hang here, so the number of tries is bounded. */
+static bool past(u64 start, u32 limit_ms) {
+    return diff_msec(start, gettime()) > limit_ms;
+}
+
+/* net_init does not return while the console has no network device, as on a
+   Wii mini. The start runs in the background so that this file keeps the
+   time. Returns the result of the start, or -ETIMEDOUT. */
+static s32 start_network(u64 start) {
+    s32 result = net_init_async(NULL, NULL);
+    if (result < 0) {
+        return result;
+    }
+    while ((result = net_get_status()) == -EBUSY) {
+        if (past(start, NETWORK_WAIT_MS)) {
+            net_deinit();
+            return -ETIMEDOUT;
+        }
+        usleep(RETRY_DELAY_US);
+    }
+    return result;
+}
+
 static bool network_ready(void) {
     static bool ready;
-    s32 result = 0;
-    for (int tries = 0; !ready && tries < NETWORK_TRIES; tries++) {
-        result = net_init();
+    u64 start = gettime();
+    while (!ready) {
+        s32 result = start_network(start);
         if (result == 0) {
             ready = true;
-        } else if (result != -EAGAIN) {
-            break;
+        } else if (result != -EAGAIN || past(start, NETWORK_WAIT_MS)) {
+            fail("The console's network did not start", result);
+            return false;
         } else {
             usleep(RETRY_DELAY_US);
         }
     }
-    if (!ready) {
-        fail("The console's network did not start", result);
-    }
-    return ready;
+    return true;
 }
 
 /* The last answer is kept because every request of an upload goes to the
@@ -64,6 +92,31 @@ static bool wait_for(s32 socket, u32 events) {
     return net_poll(&poll, 1, SOCKET_WAIT_MS) > 0;
 }
 
+/* A connect that waits inside IOS has no limit. The socket is told not to
+   wait, and the connect is asked again until it reports the connection or
+   the limit passes. */
+static s32 connect_within_limit(s32 socket, struct sockaddr_in *address) {
+    u32 no_wait = 1;
+    u32 wait = 0;
+    s32 result = net_ioctl(socket, FIONBIO, &no_wait);
+    for (u64 start = gettime(); result >= 0;) {
+        result = net_connect(socket, (struct sockaddr *)address, sizeof *address);
+        if (result >= 0 || result == -EISCONN) {
+            /* A send or a receive waits inside IOS, after wait_for has
+               shown that it can move bytes. */
+            return net_ioctl(socket, FIONBIO, &wait);
+        }
+        if (result == -EINPROGRESS || result == -EALREADY) {
+            if (past(start, SOCKET_WAIT_MS)) {
+                return -ETIMEDOUT;
+            }
+            usleep(CONNECT_DELAY_US);
+            result = 0;
+        }
+    }
+    return result;
+}
+
 s32 socket_open(const char *name, unsigned port) {
     struct sockaddr_in address = {0};
     address.sin_len = sizeof address;
@@ -73,7 +126,7 @@ s32 socket_open(const char *name, unsigned port) {
         return -1;
     }
     s32 socket = net_socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    s32 result = socket < 0 ? socket : net_connect(socket, (struct sockaddr *)&address, sizeof address);
+    s32 result = socket < 0 ? socket : connect_within_limit(socket, &address);
     if (result < 0) {
         fail("Could not connect to the host", result);
         if (socket >= 0) {

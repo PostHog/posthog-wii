@@ -3,7 +3,8 @@
 
 #include <gctypes.h>
 
-/* A wait of more than this for the other side fails a send or a receive. */
+/* A wait of more than this for the other side fails a connect, a send or a
+   receive. */
 enum { SOCKET_WAIT_MS = 15000 };
 
 /* Connects to a host name or an address. Returns a negative number when the

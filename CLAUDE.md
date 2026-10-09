@@ -38,7 +38,7 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `wii/nand.c` | ISFS. No other file reads the NAND |
 | `wii/readonly.c` | The replacement for `IOS_Write`, linked into every Wii binary |
 | `wii/sdcard.c` | libfat. No other file touches the SD card. A read mounts the card read-only |
-| `wii/socket.c` | libogc sockets. No other file calls a `net_` function. Every wait for the other side has a limit |
+| `wii/socket.c` | libogc sockets. No other file calls a `net_` function. The network start, a connect, a send and a receive each have a time limit. The name lookup has none, because libogc offers it only as a call that waits |
 | `wii/http.c` | The HTTP request and response, and the choice between plain and TLS from the host's scheme |
 | `wii/tls.c` | mbedTLS. No other file includes an mbedTLS header |
 | `wii/tls_config.h` | The changes to mbedTLS's default configuration |
