@@ -3,7 +3,6 @@
 #include <string.h>
 #include <time.h>
 
-#include <network.h>
 #include <ogc/lwp_watchdog.h>
 
 #include "mbedtls/ctr_drbg.h"
@@ -16,6 +15,7 @@
 
 #include "noise.h"
 #include "sdcard.h"
+#include "socket.h"
 
 enum { DIGEST_SIZE = 32, EXTRA_ROOTS_CAP = 16384 };
 
@@ -80,12 +80,12 @@ int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t 
 }
 
 static int send_bytes(void *ctx, const unsigned char *data, size_t len) {
-    s32 sent = net_send(*(s32 *)ctx, data, (s32)len, 0);
+    s32 sent = socket_send(*(s32 *)ctx, data, (s32)len);
     return sent < 0 ? MBEDTLS_ERR_SSL_INTERNAL_ERROR : (int)sent;
 }
 
 static int receive_bytes(void *ctx, unsigned char *data, size_t len) {
-    s32 got = net_recv(*(s32 *)ctx, data, (s32)len, 0);
+    s32 got = socket_recv(*(s32 *)ctx, data, (s32)len);
     return got < 0 ? MBEDTLS_ERR_SSL_INTERNAL_ERROR : (int)got;
 }
 

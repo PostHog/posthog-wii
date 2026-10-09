@@ -39,9 +39,9 @@ static void post_captures(unsigned tick) {
         const uint8_t *pixels = gfx_displayed(&width, &height, &len);
         char path[64];
         snprintf(path, sizeof path, "/shot?tick=%u&width=%u&height=%u", tick, width, height);
-        http_post(DEBUG_HOST, path, "application/octet-stream", pixels, len);
+        http_post(DEBUG_HOST, path, "application/octet-stream", pixels, len, NULL, 0);
         if (i == CAPTURE_COUNT - 1) {
-            http_post(DEBUG_HOST, "/done", "text/plain", "", 0);
+            http_post(DEBUG_HOST, "/done", "text/plain", "", 0, NULL, 0);
         }
     }
 }

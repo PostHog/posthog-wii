@@ -1,9 +1,15 @@
 #include "upload.h"
 
+#include <string.h>
+
 static void flush(upload *u) {
     if (u->pending_count > 0 && u->status == UPLOAD_HTTP_OK) {
         size_t json_len = events_batch_json(&u->config, u->pending, u->pending_count, u->json, sizeof u->json);
-        u->status = u->post(u->host, "/batch/", "application/json", u->json, json_len);
+        char answer[UPLOAD_ANSWER_CAP] = "";
+        u->status = u->post(u->host, "/batch/", "application/json", u->json, json_len, answer, sizeof answer);
+        if (u->status == UPLOAD_HTTP_OK && !strstr(answer, UPLOAD_OK_MARK)) {
+            u->status = UPLOAD_NOT_CAPTURE;
+        }
         if (u->status == UPLOAD_HTTP_OK) {
             u->sent += u->pending_count;
         }

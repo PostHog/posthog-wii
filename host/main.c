@@ -91,12 +91,13 @@ static int by_start(const void *a, const void *b) {
 }
 
 static long print_body(const char *host, const char *path, const char *content_type, const void *body,
-                       size_t body_len) {
+                       size_t body_len, char *answer, size_t answer_cap) {
     (void)host;
     (void)path;
     (void)content_type;
     fwrite(body, 1, body_len, stdout);
     putchar('\n');
+    snprintf(answer, answer_cap, "%s", UPLOAD_OK_MARK);
     return UPLOAD_HTTP_OK;
 }
 
@@ -136,6 +137,10 @@ int main(int argc, char **argv) {
     free(sessions.items);
 
     fprintf(stderr, "sessions found: %zu\n", sessions.count);
+    if (!delivered && batch.status == UPLOAD_NOT_CAPTURE) {
+        fprintf(stderr, "wii2posthog: %s answered, but not as PostHog capture does\n", opts.host);
+        return 1;
+    }
     if (!delivered) {
         fprintf(stderr, "wii2posthog: %s answered %ld after %zu sessions\n", opts.host, batch.status, batch.sent);
         return 1;

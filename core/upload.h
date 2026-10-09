@@ -9,18 +9,26 @@
 
 /* A request carries many sessions because each request opens a connection,
    which is slow on the Wii. */
-enum { UPLOAD_SESSIONS_PER_REQUEST = 100, UPLOAD_HTTP_OK = 200 };
+enum { UPLOAD_SESSIONS_PER_REQUEST = 100, UPLOAD_ANSWER_CAP = 64 };
 
-/* Sends one HTTP POST of body to host plus path. Returns the HTTP status, or
-   0 when no response arrived. */
+/* UPLOAD_NOT_CAPTURE is a 200 from something other than PostHog capture,
+   such as a proxy or a Wi-Fi login page. */
+enum { UPLOAD_HTTP_OK = 200, UPLOAD_NOT_CAPTURE = -1 };
+
+/* The text that PostHog capture's answer contains when it took a request. */
+#define UPLOAD_OK_MARK "\"status\":\"Ok\""
+
+/* Sends one POST of body to host plus path. Returns the HTTP status, or 0
+   when no response arrived. Writes the start of the response body to answer
+   as a string. */
 typedef long upload_post_fn(const char *host, const char *path, const char *content_type, const void *body,
-                            size_t body_len);
+                            size_t body_len, char *answer, size_t answer_cap);
 
 /* The first request that the host rejects stops the upload. Later sessions
    are not sent. */
 typedef struct {
     size_t sent; /* sessions the host accepted */
-    long status; /* UPLOAD_HTTP_OK, or the status of the request that stopped the upload */
+    long status; /* UPLOAD_HTTP_OK, UPLOAD_NOT_CAPTURE, or the HTTP status that stopped the upload */
 
     /* Private. */
     events_config config;

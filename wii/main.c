@@ -90,6 +90,8 @@ static void sync(void) {
     printf("Destination:    %s\n", config.host);
     if (!delivered && state.batch.status == 0) {
         printf("Could not reach the destination. For an https host, check that\nthe console's date is right.\n");
+    } else if (!delivered && state.batch.status == UPLOAD_NOT_CAPTURE) {
+        printf("The host answered, but not as PostHog does. Check the host in\nthe settings file.\n");
     } else if (!delivered) {
         printf("The destination answered %ld. Run the app again to retry.\n", state.batch.status);
     }

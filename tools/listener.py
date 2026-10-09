@@ -50,7 +50,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"status":1}')
+        self.wfile.write(b'{"status":"Ok"}')
 
     def log_message(self, format: str, *args: object) -> None:
         pass

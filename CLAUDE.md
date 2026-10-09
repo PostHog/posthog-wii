@@ -27,7 +27,7 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `core/playlog.c` | The daily play log record layout |
 | `core/ticks.c` | Wii tick time and its conversion to Unix time |
 | `core/events.c` | The PostHog event model and the request body |
-| `core/upload.c` | The request path, how many sessions a request carries, and stopping at the first failure |
+| `core/upload.c` | The request path, how many sessions a request carries, what answer counts as accepted, and stopping at the first failure |
 | `core/summary.c` | The one-line text form of a session that both front ends print |
 | `core/settings.c` | The settings file format and the notation for a UTC offset |
 | `host/http.c` | libcurl. No other file includes `curl.h` |
@@ -37,7 +37,8 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `wii/nand.c` | ISFS. No other file reads the NAND |
 | `wii/readonly.c` | The replacement for `IOS_Write`, linked into every Wii binary |
 | `wii/sdcard.c` | libfat. No other file reads the SD card, and the card is mounted read-only |
-| `wii/http.c` | HTTP over libogc sockets, and the choice between plain and TLS from the host's scheme |
+| `wii/socket.c` | libogc sockets. No other file calls a `net_` function. Every wait for the other side has a limit |
+| `wii/http.c` | The HTTP request and response, and the choice between plain and TLS from the host's scheme |
 | `wii/tls.c` | mbedTLS. No other file includes an mbedTLS header |
 | `wii/tls_config.h` | The changes to mbedTLS's default configuration |
 | `wii/roots.pem` | The root certificates every build trusts: Amazon Root CA 1, which signs PostHog Cloud |

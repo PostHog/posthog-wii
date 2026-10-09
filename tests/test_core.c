@@ -348,26 +348,33 @@ static void test_builds_the_batch_body(void) {
 static struct {
     int requests;
     int fail_on_request;
+    long failure_status;
     bool to_batch_path;
     size_t last_len;
     char last_end[3];
 } posted;
 
 static long record_post(const char *host, const char *path, const char *content_type, const void *body,
-                        size_t body_len) {
+                        size_t body_len, char *answer, size_t answer_cap) {
     (void)host;
     (void)content_type;
     posted.requests++;
     posted.to_batch_path = strcmp(path, "/batch/") == 0;
     posted.last_len = body_len;
     memcpy(posted.last_end, body_len >= 2 ? (const char *)body + body_len - 2 : "??", 2);
-    return posted.requests == posted.fail_on_request ? 500 : UPLOAD_HTTP_OK;
+    if (posted.requests == posted.fail_on_request) {
+        return posted.failure_status;
+    }
+    snprintf(answer, answer_cap, "{%s}", UPLOAD_OK_MARK);
+    return UPLOAD_HTTP_OK;
 }
 
-static bool upload_sessions(upload *batch, const playlog_session *session, int count, int fail_on_request) {
+static bool upload_sessions(upload *batch, const playlog_session *session, int count, int fail_on_request,
+                            long failure_status) {
     events_config config = {.api_key = "phc_test"};
     memset(&posted, 0, sizeof posted);
     posted.fail_on_request = fail_on_request;
+    posted.failure_status = failure_status;
     upload_begin(batch, &config, "http://example.com", record_post);
     for (int i = 0; i < count; i++) {
         upload_add(batch, session);
@@ -379,17 +386,21 @@ static void test_uploads_in_requests_and_stops_at_the_first_failure(void) {
     static upload batch;
     playlog_session session = {.game_code = "HAAA", .maker_code = "01", .title = "Photo Channel"};
 
-    CHECK(upload_sessions(&batch, &session, 2 * UPLOAD_SESSIONS_PER_REQUEST + 10, 0));
+    CHECK(upload_sessions(&batch, &session, 2 * UPLOAD_SESSIONS_PER_REQUEST + 10, 0, 0));
     CHECK(posted.requests == 3);
     CHECK(posted.to_batch_path);
     CHECK(batch.sent == 2 * UPLOAD_SESSIONS_PER_REQUEST + 10);
 
-    CHECK(!upload_sessions(&batch, &session, 3 * UPLOAD_SESSIONS_PER_REQUEST, 2));
+    CHECK(!upload_sessions(&batch, &session, 3 * UPLOAD_SESSIONS_PER_REQUEST, 2, 500));
     CHECK(posted.requests == 2);
     CHECK(batch.sent == UPLOAD_SESSIONS_PER_REQUEST);
     CHECK(batch.status == 500);
 
-    CHECK(upload_sessions(&batch, &session, 0, 0));
+    CHECK(!upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, 1, UPLOAD_HTTP_OK));
+    CHECK(batch.sent == 0);
+    CHECK(batch.status == UPLOAD_NOT_CAPTURE);
+
+    CHECK(upload_sessions(&batch, &session, 0, 0, 0));
     CHECK(posted.requests == 0);
 }
 
@@ -398,7 +409,7 @@ static void test_a_full_request_of_the_longest_sessions_fits_its_buffer(void) {
     playlog_session session = {.game_code = "\"\\\"\\", .maker_code = "\"\\"};
     memset(session.title, '\x01', sizeof session.title - 1);
 
-    CHECK(upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, 0));
+    CHECK(upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, 0, 0));
     CHECK(posted.last_len > 0);
     CHECK(memcmp(posted.last_end, "]}", 2) == 0);
 }
