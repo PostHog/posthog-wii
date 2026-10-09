@@ -23,8 +23,8 @@ void gfx_frame(float x, float y, unsigned frame, unsigned scale);
 /* Shows what was drawn since the last call and waits for the next frame. */
 void gfx_present(void);
 
-/* The display buffer that the last gfx_present showed: len bytes, two
-   pixels in every four as Y0, Cb, Y1, Cr. For debug builds. */
+/* The display buffer that the last gfx_present showed. It is len bytes, and
+   every four bytes hold two pixels as Y0, Cb, Y1, Cr. For debug builds. */
 const uint8_t *gfx_displayed(unsigned *width, unsigned *height, size_t *len);
 
 #endif

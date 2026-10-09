@@ -32,7 +32,7 @@ typedef enum { RUNNER_FIRE, RUNNER_PICKUP } runner_item_kind;
 typedef struct {
     runner_item_kind kind;
     float x, y;       /* top-left corner of the sprite cell */
-    uint32_t variant; /* any number; the caller picks a picture from it */
+    uint32_t variant; /* any number, from which the caller picks a picture */
 } runner_item;
 
 typedef struct {
