@@ -64,8 +64,7 @@ static void sync(void) {
     settings_parse(&config, settings_text, sdcard_read(SDCARD_SETTINGS_FILE, settings_text, sizeof settings_text));
     tls_set_utc_offset(config.utc_offset_minutes);
 
-    /* The read takes long enough on a console that a screen with no line
-       about it looks stuck. */
+    /* Printed first, because the read is slow on a console. */
     printf("Reading the play history on this console.\n\n");
     size_t image_len = 0;
     uint8_t *image = nand_read_message_board(&image_len);
@@ -85,7 +84,7 @@ static void sync(void) {
     bool delivered = upload_end(&state.batch);
     free(image);
     /* A failed upload leaves the cursor alone, so the next run sends the
-       same sessions again. PostHog drops the ones it already has. */
+       same sessions again. PostHog merges events that share an ID. */
     if (delivered && state.batch.sent > 0) {
         sdcard_write(SDCARD_CURSOR_FILE, cursor_text,
                      cursor_write(cursor_text, config.host, config.api_key, state.latest.start_ticks));

@@ -9,8 +9,7 @@
 #include <network.h>
 #include <ogc/lwp_watchdog.h>
 
-/* NETWORK_WAIT_MS is longer than the waits libogc makes for an address, so
-   a start that libogc would finish is never stopped. */
+/* NETWORK_WAIT_MS is longer than libogc's own wait for an address. */
 enum {
     NAME_CAP = 64,
     FAILURE_CAP = 64,
@@ -30,9 +29,8 @@ static bool past(u64 start, u32 limit_ms) {
     return diff_msec(start, gettime()) > limit_ms;
 }
 
-/* net_init does not return while the console has no network device, as on a
-   Wii mini. The start runs in the background so that this file keeps the
-   time. Returns the result of the start, or -ETIMEDOUT. */
+/* net_init never returns on a console with no network device, so the start
+   runs in the background and is stopped at the limit. */
 static s32 start_network(u64 start) {
     s32 result = net_init_async(NULL, NULL);
     if (result < 0) {
@@ -92,9 +90,8 @@ static bool wait_for(s32 socket, u32 events) {
     return net_poll(&poll, 1, SOCKET_WAIT_MS) > 0;
 }
 
-/* A connect that waits inside IOS has no limit. The socket is told not to
-   wait, and the connect is asked again until it reports the connection or
-   the limit passes. */
+/* A connect that waits inside IOS has no limit, so the socket does not wait
+   and the connect is asked again until it succeeds or the limit passes. */
 static s32 connect_within_limit(s32 socket, struct sockaddr_in *address) {
     u32 no_wait = 1;
     u32 wait = 0;
@@ -102,8 +99,7 @@ static s32 connect_within_limit(s32 socket, struct sockaddr_in *address) {
     for (u64 start = gettime(); result >= 0;) {
         result = net_connect(socket, (struct sockaddr *)address, sizeof *address);
         if (result >= 0 || result == -EISCONN) {
-            /* A send or a receive waits inside IOS, after wait_for has
-               shown that it can move bytes. */
+            /* socket_send relies on a socket that waits. */
             return net_ioctl(socket, FIONBIO, &wait);
         }
         if (result == -EINPROGRESS || result == -EALREADY) {

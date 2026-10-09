@@ -57,10 +57,6 @@ static void fail_handshake(int error) {
     uint32_t flags = error == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED ? mbedtls_ssl_get_verify_result(&session) : 0;
     if (flags & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE)) {
         failure = "The host's certificate is not valid on the console's date.\nCheck the date in the Wii settings.";
-    } else if (flags & MBEDTLS_X509_BADCERT_CN_MISMATCH) {
-        failure = "The host's certificate names another host.";
-    } else if (flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED) {
-        failure = "The host's certificate comes from an authority that the app\ndoes not trust.";
     } else {
         fail("The secure connection failed", error);
     }
@@ -103,7 +99,7 @@ int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t 
 }
 
 /* mbedTLS reads and replaces its seed file through the next two functions,
-   because of wii/tls_config.h. Each returns a negative number on failure. */
+   because of wii/tls_config.h. */
 
 static const char *seed_problem;
 

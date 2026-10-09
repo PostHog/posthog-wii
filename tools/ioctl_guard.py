@@ -5,16 +5,13 @@
 
 Usage: powerpc-eabi-objdump -d <elf> | python3 tools/ioctl_guard.py
 
-Every change to the console's internal storage, other than a write to an open
-file, goes through an ioctl on /dev/fs or /dev/es. A list of function names
-cannot bound those, because the compiler folds one libogc function into another
-and the folded function leaves no name. This check reads the ioctl number at
-each call.
+A change to the console's internal storage that is not a file write goes
+through an ioctl on /dev/fs or /dev/es. The compiler folds one libogc function
+into another, so a list of function names cannot bound those ioctls.
 
-It takes the constant that the code loads into the ioctl register nearest
-above the call, and it follows no branch. It catches a libogc that starts to
-send a new ioctl. It proves nothing about code that someone wrote to hide a
-number.
+The check takes the constant loaded into the ioctl register nearest above each
+call and follows no branch. It catches a libogc that sends a new ioctl. It
+proves nothing about code written to hide a number.
 """
 
 import re
