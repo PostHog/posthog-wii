@@ -20,7 +20,7 @@ TLS_FLAGS := -I$(MBEDTLS)/include -I. '-DMBEDTLS_USER_CONFIG_FILE="tls_config.h"
 TLS_LIB := $(OUT)/libmbedtls.a
 TLS_OBJECTS := $(patsubst $(MBEDTLS)/library/%.c,$(OUT)/mbedtls/%.o,$(wildcard $(MBEDTLS)/library/*.c))
 
-CFLAGS := -std=gnu11 -g -O2 -Wall -Wextra -Werror $(MACHDEP) -I../core -I../game -I$(GEN) -I$(LIBOGC_INC) $(TLS_FLAGS)
+CFLAGS := -std=gnu11 -g -O2 -Wall -Wextra -Wconversion -Wshadow -Werror $(MACHDEP) -I../core -I../game -I$(GEN) -I$(LIBOGC_INC) $(TLS_FLAGS)
 # See readonly.c.
 WRAP := -Wl,--wrap=IOS_Write -Wl,--wrap=IOS_WriteAsync
 LIBS := $(WRAP) -L$(LIBOGC_LIB) -lfat -lwiiuse -lbte -logc -lm

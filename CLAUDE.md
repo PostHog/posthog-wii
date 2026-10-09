@@ -67,7 +67,7 @@ These follow "A Philosophy of Software Design".
 
 ## C rules
 
-- C11, built with `-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror`.
+- C11, built with `-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror`. The Wii build is GNU C11 without `-Wpedantic`, because `wii/` uses `#embed` and libogc's headers.
 - `core/` compiles with both Apple clang and devkitPPC GCC. Run `make test` and `make wii` after a change to it, because each compiler rejects code the other accepts.
 - `core/` and `game/` are portable: no libogc types, no host-only headers, no heap allocation, no global mutable state.
 - Every read of image data goes through `core/bytes.h`. Never cast a buffer to a struct and never index image data directly.
