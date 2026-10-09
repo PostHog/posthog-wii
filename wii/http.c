@@ -11,6 +11,8 @@
    the body. A proxy between the console and PostHog adds headers. */
 enum { SCHEME_CAP = 6, NAME_CAP = 64, HEADER_CAP = 320, RESPONSE_CAP = 4096, HTTP_PORT = 80, HTTPS_PORT = 443 };
 
+_Static_assert(SCHEME_CAP == 5 + 1 && NAME_CAP == 63 + 1, "the widths in http_post's sscanf fill these buffers");
+
 typedef struct {
     s32 socket;
     bool secure;
