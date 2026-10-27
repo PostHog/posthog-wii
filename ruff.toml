@@ -1,0 +1,9 @@
+line-length = 120
+
+[lint]
+select = ["ALL"]
+# Each pair of docstring rules contradicts itself, so this file turns off one rule of each pair.
+ignore = ["D203", "D213"]
+
+[lint.flake8-copyright]
+notice-rgx = "SPDX-License-Identifier: MIT"

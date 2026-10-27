@@ -1,6 +1,8 @@
 #include "gfx.h"
 
 #include <malloc.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <gccore.h>
@@ -11,25 +13,49 @@
 
 /* The setup follows the gxSprites example that ships with libogc. */
 
-enum { FIFO_SIZE = 256 * 1024 };
+enum {
+    FIFO_SIZE = 256 * 1024,
+    FIFO_ALIGNMENT = 32,
+    CANVAS_WIDTH_4_3 = 640,
+    CANVAS_WIDTH_16_9 = 854,
+    FAR_PLANE = 300,
+    DRAW_DEPTH = 5,
+    OPAQUE = 0xFF,
+    UNTINTED = 0xFFFFFF,
+};
+
+/* A color is 0xRRGGBB. */
+static const unsigned RED_SHIFT = 16;
+static const unsigned GREEN_SHIFT = 8;
+
+/* The middle of an atlas cell, in cells. */
+static const float CELL_MIDDLE = 0.5F;
+
+/* A rectangle on the canvas, or in the atlas as texture coordinates. */
+typedef struct {
+    float left;
+    float top;
+    float right;
+    float bottom;
+} area;
 
 static GXRModeObj *mode;
 static void *framebuffers[2];
-static int back_buffer;
+static unsigned back_buffer;
 static GXTexObj atlas;
 
-static void vertex(float x, float y, uint32_t rgb, float s, float t) {
-    GX_Position2f32(x, y);
-    GX_Color4u8((u8)(rgb >> 16), (u8)(rgb >> 8), (u8)rgb, 0xFF);
-    GX_TexCoord2f32(s, t);
+static void vertex(gfx_point position, uint32_t rgb, gfx_point texel) {
+    GX_Position2f32(position.x, position.y);
+    GX_Color4u8((u8)(rgb >> RED_SHIFT), (u8)(rgb >> GREEN_SHIFT), (u8)rgb, OPAQUE);
+    GX_TexCoord2f32(texel.x, texel.y);
 }
 
-static void quad(float x, float y, float width, float height, uint32_t rgb, float s0, float t0, float s1, float t1) {
+static void draw_quad(area screen, uint32_t rgb, area texture) {
     GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
-    vertex(x, y, rgb, s0, t0);
-    vertex(x + width, y, rgb, s1, t0);
-    vertex(x + width, y + height, rgb, s1, t1);
-    vertex(x, y + height, rgb, s0, t1);
+    vertex((gfx_point){screen.left, screen.top}, rgb, (gfx_point){texture.left, texture.top});
+    vertex((gfx_point){screen.right, screen.top}, rgb, (gfx_point){texture.right, texture.top});
+    vertex((gfx_point){screen.right, screen.bottom}, rgb, (gfx_point){texture.right, texture.bottom});
+    vertex((gfx_point){screen.left, screen.bottom}, rgb, (gfx_point){texture.left, texture.bottom});
     GX_End();
 }
 
@@ -45,9 +71,9 @@ float gfx_init(void) {
     if (mode->viTVMode & VI_NON_INTERLACE) {
         VIDEO_WaitVSync();
     }
-    back_buffer = 1;
+    back_buffer = 1U;
 
-    void *fifo = memalign(32, FIFO_SIZE);
+    void *fifo = memalign(FIFO_ALIGNMENT, FIFO_SIZE);
     memset(fifo, 0, FIFO_SIZE);
     GX_Init(fifo, FIFO_SIZE);
 
@@ -92,30 +118,39 @@ float gfx_init(void) {
 
     /* A 16:9 console stretches the 640-pixel frame sideways on the TV. The
        wider canvas squeezes the drawing by the same factor first. */
-    float width = CONF_GetAspectRatio() == CONF_ASPECT_16_9 ? 854 : 640;
+    float width = CONF_GetAspectRatio() == CONF_ASPECT_16_9 ? CANVAS_WIDTH_16_9 : CANVAS_WIDTH_4_3;
     Mtx44 projection;
-    guOrtho(projection, 0, GFX_HEIGHT, 0, width, 0, 300);
+    guOrtho(projection, 0, GFX_HEIGHT, 0, width, 0, FAR_PLANE);
     GX_LoadProjectionMtx(projection, GX_ORTHOGRAPHIC);
     Mtx view;
     guMtxIdentity(view);
-    guMtxTransApply(view, view, 0, 0, -5);
+    guMtxTransApply(view, view, 0, 0, -DRAW_DEPTH);
     GX_LoadPosMtxImm(view, GX_PNMTX0);
     return width;
 }
 
-void gfx_rect(float x, float y, float width, float height, uint32_t rgb) {
-    float s = (ATLAS_WHITE % ATLAS_COLUMNS + 0.5f) * ATLAS_CELL / ATLAS_WIDTH;
-    float t = (ATLAS_WHITE / ATLAS_COLUMNS + 0.5f) * ATLAS_CELL / ATLAS_HEIGHT;
-    quad(x, y, width, height, rgb, s, t, s, t);
+void gfx_rect(float left, float top, float width, float height, uint32_t rgb) {
+    /* Every corner samples the middle of the white cell. */
+    unsigned column = ATLAS_WHITE % ATLAS_COLUMNS;
+    unsigned row = ATLAS_WHITE / ATLAS_COLUMNS;
+    gfx_point white = {
+        ((float)column + CELL_MIDDLE) * (float)ATLAS_CELL / (float)ATLAS_WIDTH,
+        ((float)row + CELL_MIDDLE) * (float)ATLAS_CELL / (float)ATLAS_HEIGHT,
+    };
+    draw_quad((area){left, top, left + width, top + height}, rgb, (area){white.x, white.y, white.x, white.y});
 }
 
-void gfx_frame(float x, float y, unsigned frame, unsigned scale) {
-    float s0 = (float)(frame % ATLAS_COLUMNS * ATLAS_CELL) / ATLAS_WIDTH;
-    float t0 = (float)(frame / ATLAS_COLUMNS * ATLAS_CELL) / ATLAS_HEIGHT;
-    float s1 = s0 + (float)ATLAS_CELL / ATLAS_WIDTH;
-    float t1 = t0 + (float)ATLAS_CELL / ATLAS_HEIGHT;
+void gfx_frame(unsigned frame, gfx_point corner, unsigned scale) {
+    unsigned column = frame % ATLAS_COLUMNS;
+    unsigned row = frame / ATLAS_COLUMNS;
+    area texture = {
+        .left = (float)(column * ATLAS_CELL) / (float)ATLAS_WIDTH,
+        .top = (float)(row * ATLAS_CELL) / (float)ATLAS_HEIGHT,
+    };
+    texture.right = texture.left + ((float)ATLAS_CELL / (float)ATLAS_WIDTH);
+    texture.bottom = texture.top + ((float)ATLAS_CELL / (float)ATLAS_HEIGHT);
     float size = (float)(ATLAS_CELL * scale);
-    quad(x, y, size, size, 0xFFFFFF, s0, t0, s1, t1);
+    draw_quad((area){corner.x, corner.y, corner.x + size, corner.y + size}, UNTINTED, texture);
 }
 
 void gfx_present(void) {
@@ -125,14 +160,16 @@ void gfx_present(void) {
     VIDEO_SetNextFramebuffer(framebuffers[back_buffer]);
     VIDEO_Flush();
     VIDEO_WaitVSync();
-    back_buffer ^= 1;
+    back_buffer ^= 1U;
 }
 
 /* Dolphin writes this buffer to emulated memory only when its graphics hack
    "XFBToTextureEnable" is off. */
-const uint8_t *gfx_displayed(unsigned *width, unsigned *height, size_t *len) {
-    *width = mode->fbWidth;
-    *height = mode->xfbHeight;
-    *len = (size_t)mode->fbWidth * mode->xfbHeight * VI_DISPLAY_PIX_SZ;
-    return framebuffers[back_buffer ^ 1];
+gfx_picture gfx_displayed(void) {
+    return (gfx_picture){
+        .pixels = framebuffers[back_buffer ^ 1U],
+        .len = (size_t)mode->fbWidth * mode->xfbHeight * VI_DISPLAY_PIX_SZ,
+        .width = mode->fbWidth,
+        .height = mode->xfbHeight,
+    };
 }

@@ -9,7 +9,7 @@
    toward him. A fire ends the run and a pickup adds to the score. */
 
 enum {
-    RUNNER_CELL = 80,  /* every sprite is drawn in a square cell of this size */
+    RUNNER_CELL = 80,  /* the game draws every sprite in a square cell of this size */
     RUNNER_MAX_X = 96, /* the left edge of Max's cell */
     /* The row of a cell that stands on the ground, for Max and for a fire. */
     RUNNER_MAX_FEET = 74,
@@ -55,13 +55,13 @@ typedef struct {
     uint32_t ticks_since_press, bonus, random;
 } runner;
 
-void runner_init(runner *r, float width, float ground_y, uint32_t seed);
+void runner_init(runner *game, float width, float ground_y, uint32_t seed);
 
 /* Advances one tick of 1/60 s. jump is true while the jump button is held.
    A press starts a run, and after a run ends a press starts the next one. */
-void runner_step(runner *r, bool jump);
+void runner_step(runner *game, bool jump);
 
-/* The frame to draw from a strip of frame_count frames of r->animation. */
-unsigned runner_frame(const runner *r, unsigned frame_count);
+/* The frame to draw from a strip of frame_count frames of game->animation. */
+unsigned runner_frame(const runner *game, unsigned frame_count);
 
 #endif

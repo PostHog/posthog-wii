@@ -1,0 +1,54 @@
+# Install once with: uvx pre-commit install
+# clang-tidy needs the Wii build's headers, so it runs in `make lint` and CI, not here.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # frozen: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: 98ad4ddb9c057de2f5b9e93e44e6db959807d68c # frozen: v23.1.3
+    hooks:
+      - id: clang-format
+        types_or: [c]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 25bcf95026b96e2dd3c0aec3090c3d6ef6ca2e6c # frozen: v0.17.3
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95 # frozen: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--enable=all]
+
+  - repo: https://github.com/woodruffw/zizmor-pre-commit
+    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f # frozen: v1.31.1
+    hooks:
+      - id: zizmor
+        args: [--offline, --persona=pedantic]
+
+  # A Message Board dump holds the owner's messages, photos and a console ID.
+  - repo: local
+    hooks:
+      - id: forbid-console-dumps
+        name: forbid console dumps
+        language: fail
+        entry: A Wii dump must never be committed
+        files: (^samples/|\.vff$)

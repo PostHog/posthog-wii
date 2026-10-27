@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["pillow"]
@@ -6,7 +7,7 @@
 
 POST /shot?tick=..&width=..&height=.. saves the Wii display buffer as a PNG.
 POST /done creates the file "done", which tells tools/shots.sh to stop.
-Every other POST is appended to posts.log with its body.
+The listener appends every other POST, with its body, to posts.log.
 
 Usage: listener.py <output dir> [port]
 """
@@ -18,12 +19,13 @@ from pathlib import Path
 
 from PIL import Image
 
-OUT = Path(sys.argv[1])
-PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 18010
+ARGUMENTS = sys.argv[1:]
+OUT = Path(ARGUMENTS[0])
+PORT = int(ARGUMENTS[1]) if ARGUMENTS[1:] else 18010
 
 
 def decode_display_buffer(body: bytes, size: tuple[int, int]) -> Image.Image:
-    """The buffer holds two pixels in every four bytes: Y0, Cb, Y1, Cr."""
+    """Decode a display buffer, which holds two pixels in every four bytes: Y0, Cb, Y1, Cr."""
     luma = bytearray(size[0] * size[1])
     luma[0::2], luma[1::2] = body[0::4], body[2::4]
     blue = bytearray(len(luma))
@@ -35,7 +37,10 @@ def decode_display_buffer(body: bytes, size: tuple[int, int]) -> Image.Image:
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    """Answer every POST as PostHog capture does."""
+
     def do_POST(self) -> None:
+        """Save the request as the module docstring describes."""
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         url = urllib.parse.urlparse(self.path)
         query = {key: values[0] for key, values in urllib.parse.parse_qs(url.query).items()}
@@ -52,8 +57,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b'{"status":"Ok"}')
 
-    def log_message(self, format: str, *args: object) -> None:
-        pass
+    def log_message(self, message_format: str, *args: object) -> None:
+        """Print nothing, so the frame capture's output stays readable."""
 
 
 if __name__ == "__main__":

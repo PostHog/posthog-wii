@@ -1,3 +1,6 @@
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -18,6 +21,8 @@
 #include "upload.h"
 
 enum { CONSOLE_MARGIN = 20, SETTINGS_TEXT_CAP = 1024 };
+
+static const u32 CHOICE_BUTTONS = (u32)WPAD_BUTTON_A | (u32)WPAD_BUTTON_HOME;
 
 typedef struct {
     size_t found;
@@ -64,7 +69,7 @@ static void sync(void) {
     settings_parse(&config, settings_text, sdcard_read(SDCARD_SETTINGS_FILE, settings_text, sizeof settings_text));
     tls_set_utc_offset(config.utc_offset_minutes);
 
-    /* Printed first, because the read is slow on a console. */
+    /* The app prints this before the read, because the read is slow on a console. */
     printf("Reading the play history on this console.\n\n");
     size_t image_len = 0;
     uint8_t *image = nand_read_message_board(&image_len);
@@ -74,7 +79,7 @@ static void sync(void) {
     }
 
     static sync_state state;
-    state.sending = config.host[0] != '\0' && config.api_key[0] != '\0';
+    state.sending = (bool)(config.host[0] != '\0' && config.api_key[0] != '\0');
     char cursor_text[CURSOR_TEXT_CAP];
     state.cursor = cursor_read(cursor_text, sdcard_read(SDCARD_CURSOR_FILE, cursor_text, sizeof cursor_text),
                                config.host, config.api_key);
@@ -97,7 +102,7 @@ static void sync(void) {
         printf("Latest session: %s\n", line);
     }
     if (!state.sending) {
-        printf("Nothing was sent. Add a host and a project token to\n" SDCARD_SETTINGS_FILE " on the SD card.\n");
+        printf("The app sent nothing. Add a host and a project token to\n" SDCARD_SETTINGS_FILE " on the SD card.\n");
         return;
     }
     printf("New ones sent:  %u\n", (unsigned)state.batch.sent);
@@ -120,7 +125,7 @@ static bool wait_for_a_or_home(void) {
     for (;;) {
         WPAD_ScanPads();
         u32 pressed = WPAD_ButtonsDown(WPAD_CHAN_0);
-        if (pressed & (WPAD_BUTTON_A | WPAD_BUTTON_HOME)) {
+        if (pressed & CHOICE_BUTTONS) {
             return (pressed & WPAD_BUTTON_A) != 0;
         }
         VIDEO_WaitVSync();

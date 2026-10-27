@@ -4,7 +4,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
+#include <sys/errno.h>
+#include <sys/unistd.h>
 
 #include <network.h>
 #include <ogc/lwp_watchdog.h>
@@ -22,7 +23,7 @@ enum {
 static char failure[FAILURE_CAP];
 
 static void fail(const char *what, s32 error) {
-    snprintf(failure, sizeof failure, "%s (error %d).", what, (int)error);
+    (void)snprintf(failure, sizeof failure, "%s (error %d).", what, (int)error);
 }
 
 static bool past(u64 start, u32 limit_ms) {
@@ -30,7 +31,7 @@ static bool past(u64 start, u32 limit_ms) {
 }
 
 /* net_init never returns on a console with no network device, so the start
-   runs in the background and is stopped at the limit. */
+   runs in the background and the app stops waiting for it at the limit. */
 static s32 start_network(u64 start) {
     s32 result = net_init_async(NULL, NULL);
     if (result < 0) {
@@ -63,8 +64,8 @@ static bool network_ready(void) {
     return true;
 }
 
-/* The last answer is kept because every request of an upload goes to the
-   same host and each lookup is a round trip. */
+/* resolve keeps the last answer, because every request of an upload goes to
+   the same host and each lookup is a round trip. */
 static bool resolve(const char *name, struct in_addr *address) {
     static char known_name[NAME_CAP];
     static struct in_addr known_address;
@@ -79,7 +80,8 @@ static bool resolve(const char *name, struct in_addr *address) {
             }
             memcpy(&known_address, entry->h_addr_list[0], sizeof known_address);
         }
-        snprintf(known_name, sizeof known_name, "%s", name);
+        /* The next request looks up a name too long to keep again. */
+        (void)snprintf(known_name, sizeof known_name, "%s", name);
     }
     *address = known_address;
     return true;
@@ -91,7 +93,7 @@ static bool wait_for(s32 socket, u32 events) {
 }
 
 /* A connect that waits inside IOS has no limit, so the socket does not wait
-   and the connect is asked again until it succeeds or the limit passes. */
+   and this function retries the connect until it succeeds or the limit passes. */
 static s32 connect_within_limit(s32 socket, struct sockaddr_in *address) {
     u32 no_wait = 1;
     u32 wait = 0;
@@ -138,8 +140,9 @@ const char *socket_failure(void) {
 }
 
 s32 socket_send(s32 socket, const void *data, s32 len) {
-    /* net_send returns only after IOS has taken every byte. The wait shows
-       that IOS can take some, so each call offers a small piece. */
+    /* net_send returns only after IOS has taken every byte. A ready socket
+       shows only that IOS can take some bytes, so each call offers at most
+       SEND_PIECE of them. */
     if (len > SEND_PIECE) {
         len = SEND_PIECE;
     }

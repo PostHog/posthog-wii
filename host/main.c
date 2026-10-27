@@ -1,10 +1,12 @@
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "events.h"
 #include "http.h"
+#include "http_request.h"
 #include "playlog.h"
 #include "settings.h"
 #include "summary.h"
@@ -24,14 +26,16 @@ typedef struct {
     size_t cap;
 } session_list;
 
+enum { FIRST_SESSION_CAP = 256 };
+
 static void usage(void) {
-    fputs("usage: wii2posthog <cdb.vff> [--utc-offset +HH:MM] --dry-run\n"
-          "       wii2posthog <cdb.vff> [--utc-offset +HH:MM] --host <url> --api-key <key>\n",
-          stderr);
+    (void)fputs("usage: wii2posthog <cdb.vff> [--utc-offset +HH:MM] --dry-run\n"
+                "       wii2posthog <cdb.vff> [--utc-offset +HH:MM] --host <url> --api-key <key>\n",
+                stderr);
 }
 
 static bool parse_options(int argc, char **argv, options *opts) {
-    for (int i = 1; i < argc; i++) {
+    for (int i = 1; i < argc && argv[i]; i++) {
         const char *arg = argv[i];
         const char *value = i + 1 < argc ? argv[i + 1] : NULL;
         if (strcmp(arg, "--dry-run") == 0) {
@@ -51,7 +55,7 @@ static bool parse_options(int argc, char **argv, options *opts) {
             return false;
         }
     }
-    return opts->path && (opts->dry_run || (opts->host && opts->api_key));
+    return (opts->path && (opts->dry_run || (opts->host && opts->api_key))) != 0;
 }
 
 static uint8_t *read_file(const char *path, size_t *len) {
@@ -60,44 +64,47 @@ static uint8_t *read_file(const char *path, size_t *len) {
         return NULL;
     }
     uint8_t *data = NULL;
-    if (fseek(file, 0, SEEK_END) == 0) {
-        long size = ftell(file);
-        rewind(file);
-        if (size > 0 && (data = malloc((size_t)size)) != NULL) {
+    long size = fseek(file, 0, SEEK_END) == 0 ? ftell(file) : -1;
+    if (size > 0 && fseek(file, 0, SEEK_SET) == 0) {
+        data = malloc((size_t)size);
+        if (data) {
             *len = fread(data, 1, (size_t)size, file);
         }
     }
-    fclose(file);
+    (void)fclose(file);
     return data;
 }
 
 static void collect(void *ctx, const playlog_session *session) {
     session_list *list = ctx;
     if (list->count == list->cap) {
-        list->cap = list->cap ? list->cap * 2 : 256;
-        list->items = realloc(list->items, list->cap * sizeof *list->items);
-        if (!list->items) {
+        size_t cap = list->cap ? list->cap * 2 : FIRST_SESSION_CAP;
+        playlog_session *items = realloc(list->items, cap * sizeof *items);
+        if (!items) {
             perror("wii2posthog");
             exit(1);
         }
+        list->items = items;
+        list->cap = cap;
     }
     list->items[list->count++] = *session;
 }
 
-static int by_start(const void *a, const void *b) {
-    uint64_t left = ((const playlog_session *)a)->start_ticks;
-    uint64_t right = ((const playlog_session *)b)->start_ticks;
+/* qsort sets the signature of a comparison function. */
+/* NOLINTNEXTLINE(bugprone-easily-swappable-parameters) */
+static int by_start(const void *left_session, const void *right_session) {
+    uint64_t left = ((const playlog_session *)left_session)->start_ticks;
+    uint64_t right = ((const playlog_session *)right_session)->start_ticks;
     return (left > right) - (left < right);
 }
 
-static long print_body(const char *host, const char *path, const char *content_type, const void *body,
-                       size_t body_len, char *answer, size_t answer_cap) {
-    (void)host;
-    (void)path;
-    (void)content_type;
-    fwrite(body, 1, body_len, stdout);
-    putchar('\n');
-    snprintf(answer, answer_cap, "%s", UPLOAD_OK_MARK);
+/* A failed write to stdout counts as no answer, which stops the upload. */
+static long print_body(const http_request *request, char *answer, size_t answer_cap) {
+    if (fwrite(request->body, 1, request->body_len, stdout) != request->body_len || putchar('\n') == EOF ||
+        fflush(stdout) != 0) {
+        return UPLOAD_NO_ANSWER;
+    }
+    (void)snprintf(answer, answer_cap, "%s", UPLOAD_OK_MARK);
     return UPLOAD_HTTP_OK;
 }
 
@@ -111,7 +118,7 @@ int main(int argc, char **argv) {
     size_t image_len = 0;
     uint8_t *image = read_file(opts.path, &image_len);
     if (!image) {
-        fprintf(stderr, "wii2posthog: cannot read %s\n", opts.path);
+        (void)fprintf(stderr, "wii2posthog: cannot read %s\n", opts.path);
         return 1;
     }
     session_list sessions = {0};
@@ -130,25 +137,28 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < sessions.count; i++) {
         char line[SESSION_SUMMARY_CAP];
         session_summary(&sessions.items[i], line);
-        fprintf(stderr, "%s\n", line);
+        (void)fprintf(stderr, "%s\n", line);
         upload_add(&batch, &sessions.items[i]);
     }
     bool delivered = upload_end(&batch);
     free(sessions.items);
 
-    fprintf(stderr, "sessions found: %zu\n", sessions.count);
+    (void)fprintf(stderr, "sessions found: %zu\n", sessions.count);
     if (!delivered) {
-        if (batch.status == UPLOAD_NO_ANSWER) {
-            fprintf(stderr, "wii2posthog: no answer from %s after %zu sessions\n", opts.host, batch.sent);
+        if (opts.dry_run) {
+            (void)fprintf(stderr, "wii2posthog: cannot write to stdout after %zu sessions\n", batch.sent);
+        } else if (batch.status == UPLOAD_NO_ANSWER) {
+            (void)fprintf(stderr, "wii2posthog: no answer from %s after %zu sessions\n", opts.host, batch.sent);
         } else if (batch.status == UPLOAD_NOT_CAPTURE) {
-            fprintf(stderr, "wii2posthog: %s answered, but not as PostHog capture does\n", opts.host);
+            (void)fprintf(stderr, "wii2posthog: %s answered, but not as PostHog capture does\n", opts.host);
         } else {
-            fprintf(stderr, "wii2posthog: %s answered %ld after %zu sessions\n", opts.host, batch.status, batch.sent);
+            (void)fprintf(stderr, "wii2posthog: %s answered %ld after %zu sessions\n", opts.host, batch.status,
+                          batch.sent);
         }
         return 1;
     }
     if (!opts.dry_run) {
-        fprintf(stderr, "sessions sent: %zu\n", batch.sent);
+        (void)fprintf(stderr, "sessions sent: %zu\n", batch.sent);
     }
     return 0;
 }

@@ -1,8 +1,11 @@
 #include "noise.h"
 
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
+#include <sys/unistd.h>
 #include <time.h>
-#include <unistd.h>
 
 #include <gccore.h>
 #include <ogc/lwp_watchdog.h>
@@ -10,8 +13,8 @@
 
 enum { READINGS_MAX = 100, CHANGES_WANTED = 32, READING_GAP_US = 15000 };
 
-_Static_assert(sizeof(u32) + sizeof(time_t) + READINGS_MAX * (sizeof(struct vec3w_t) + sizeof(u64)) <= NOISE_CAP,
-               "NOISE_CAP must hold every reading");
+static_assert(sizeof(u32) + sizeof(time_t) + (READINGS_MAX * (sizeof(struct vec3w_t) + sizeof(u64))) <= NOISE_CAP,
+              "NOISE_CAP must hold every reading");
 
 static noise_report last;
 

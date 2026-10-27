@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # /// script
 # requires-python = ">=3.11"
 # ///
@@ -99,7 +100,31 @@ TARGET = re.compile(r"<([^>+]+)>")
 CALLS = {"bl", "bctrl", "blrl"}
 
 
+def ioctl_problem(caller: str, name: str, loaded: dict[str, int]) -> str | None:
+    """Return why a call from caller to the IOS function name breaks the rule, or None."""
+    if name not in IOCTL_REGISTER:
+        return f"{caller} calls {name}, which this check cannot read"
+    number = loaded.get(IOCTL_REGISTER[name], FROM_CALLER)
+    if number in ALLOWED.get(caller, set()):
+        return None
+    sent = "a number it does not load as a constant" if number == FROM_CALLER else f"ioctl {number:#x}"
+    return f"{caller} sends {sent}, which ALLOWED does not list"
+
+
+def track_registers(mnemonic: str, operands: str, loaded: dict[str, int]) -> None:
+    """Update the constants that loaded holds per register after one instruction."""
+    if mnemonic in CALLS:
+        # A call can change every register that carries an argument.
+        loaded.clear()
+    elif mnemonic == "li":
+        register, value = operands.split(",")
+        loaded[register] = int(value)
+    elif not mnemonic.startswith(("st", "cmp")):
+        loaded.pop(operands.partition(",")[0], None)
+
+
 def problems(listing: list[str]) -> list[str]:
+    """Return one line for each ioctl in the disassembly listing that ALLOWED does not permit."""
     found: list[str] = []
     calls = 0
     caller = ""
@@ -109,7 +134,7 @@ def problems(listing: list[str]) -> list[str]:
         if function:
             # The compiler names a changed copy of a function with a dot suffix.
             caller = function.group(1).split(".")[0]
-            loaded = {}
+            loaded.clear()
             continue
         instruction = INSTRUCTION.match(line)
         if not instruction:
@@ -118,22 +143,10 @@ def problems(listing: list[str]) -> list[str]:
         target = TARGET.search(operands) if mnemonic in ("bl", "b") else None
         if target and target.group(1).startswith("IOS_Ioctl"):
             calls += 1
-            name = target.group(1)
-            if name not in IOCTL_REGISTER:
-                found.append(f"{caller} calls {name}, which this check cannot read")
-            else:
-                number = loaded.get(IOCTL_REGISTER[name], FROM_CALLER)
-                if number not in ALLOWED.get(caller, set()):
-                    sent = "a number it does not load as a constant" if number == FROM_CALLER else f"ioctl {number:#x}"
-                    found.append(f"{caller} sends {sent}, which ALLOWED does not list")
-        if mnemonic in CALLS:
-            # A call can change every register that carries an argument.
-            loaded = {}
-        elif mnemonic == "li":
-            register, value = operands.split(",")
-            loaded[register] = int(value)
-        elif not mnemonic.startswith(("st", "cmp")):
-            loaded.pop(operands.split(",")[0], None)
+            problem = ioctl_problem(caller, target.group(1), loaded)
+            if problem:
+                found.append(problem)
+        track_registers(mnemonic, operands, loaded)
     if calls == 0:
         found.append("the listing holds no IOS ioctl call, so there was nothing to check")
     return list(dict.fromkeys(found))
@@ -141,6 +154,5 @@ def problems(listing: list[str]) -> list[str]:
 
 if __name__ == "__main__":
     lines = problems(sys.stdin.read().splitlines())
-    for line in lines:
-        print(f"ioctl_guard: {line}", file=sys.stderr)
+    sys.stderr.writelines(f"ioctl_guard: {line}\n" for line in lines)
     sys.exit(1 if lines else 0)

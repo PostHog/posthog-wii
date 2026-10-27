@@ -4,3 +4,4 @@ assets/
 samples/
 *.vff
 .DS_Store
+.claude/worktrees/

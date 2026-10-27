@@ -4,7 +4,8 @@ CFLAGS := -std=c11 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror -I
 CORE := $(wildcard core/*.c)
 HEADERS := $(wildcard core/*.h game/*.h tests/*.h)
 
-# Fetched, not committed. The hash is the one the mbedTLS release publishes.
+# The build downloads mbedTLS instead of committing it. The hash is the one
+# the mbedTLS release page publishes.
 MBEDTLS_VERSION := 3.6.7
 MBEDTLS_SHA256 := a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
 MBEDTLS := assets/mbedtls-$(MBEDTLS_VERSION)
@@ -14,9 +15,9 @@ MBEDTLS := assets/mbedtls-$(MBEDTLS_VERSION)
 DEVKIT_IMAGE := devkitpro/devkitppc:20251231@sha256:6e9c24976b1eab09ac349bf899c8a68a7dd154a30d5a3bace23ff9e846a18bab
 DEVKIT := docker run --rm -v "$(CURDIR)":/src -w /src/wii $(DEVKIT_IMAGE) make -j8 MBEDTLS=../$(MBEDTLS)
 
-# The pictures come from PostHog's own npm packages. They are fetched, not
-# committed. See the Brand section of CLAUDE.md. Each hash is the version's
-# dist.integrity in the npm registry, written in hexadecimal.
+# The pictures come from PostHog's own npm packages, which the build downloads
+# instead of committing. See the Brand section of CLAUDE.md. Each hash is the
+# version's dist.integrity in the npm registry, written in hexadecimal.
 HEDGEHOG_MODE_VERSION := 0.0.62
 HEDGEHOG_MODE_SHA512 := ebcacd35cc7f49bf1fdbb93e742bc34c30c67be9c7acd984bcbd4ce1285fc342d554a2267dc92a96a36e19c068c38841e151988d664c3334242ada1a54d38f43
 BRAND_VERSION := 0.12.3
@@ -28,6 +29,20 @@ fetch_npm = curl -sSfL -o $@.tgz https://registry.npmjs.org/$(1)/-/$(notdir $(1)
 SPRITES := assets/hedgehog-mode/sprites.png
 CRESTS := assets/brand/crests
 ICON_ART := assets/brand/hoggies/two-player.png
+
+# .pre-commit-config.yaml pins every other formatter and linter. A new version
+# of one can change what it accepts.
+PRE_COMMIT := uvx pre-commit@4.7.0
+CLANG_TIDY := uvx clang-tidy@23.1.4
+HOST_C_SOURCES := $(wildcard core/*.c game/*.c host/*.c tests/*.c)
+WII_C_SOURCES := $(wildcard wii/*.c)
+# The pip build of clang-tidy does not find the macOS system headers by itself.
+SDK := $(shell xcrun --show-sdk-path 2>/dev/null)
+# clang-tidy and editors read each folder's compile_flags.txt. The one in wii/
+# names the macros that devkitPPC's GCC defines for the Wii, and the build
+# image's headers. The rule below copies those headers out of the image into
+# this folder. That GCC accepts #embed in GNU C11 without a warning.
+DEVKIT_HEADERS := build/devkit
 
 # The folder to copy to the top of an SD card.
 SD := build/sd/apps/posthog-wii
@@ -65,12 +80,14 @@ $(SPRITES):
 	tar -xzf $@.tgz -C $(dir $@) --strip-components=2 package/assets/sprites.png package/assets/sprites.json
 	rm $@.tgz
 
-# The folder is made after the check, because make takes a folder that exists as built.
+# The rule makes the folder after the hash check. Make treats a folder that
+# exists as built, so a failed download must not leave one behind.
 $(CRESTS):
 	mkdir -p $(dir $@)
 	$(call fetch_npm,@posthog/brand,$(BRAND_VERSION),$(BRAND_SHA512))
 	mkdir -p $@
-	tar -xzf $@.tgz -C $@ --strip-components=6 'package/dist/generated/crests/mini/png/*.png'
+	tar -xzf $@.tgz -C $@ --strip-components=6 package/dist/generated/crests/mini/png
+	find $@ -type f ! -name '*.png' -delete
 	rm $@.tgz
 
 $(ICON_ART):
@@ -93,15 +110,32 @@ $(MBEDTLS):
 	tar -xjf assets/mbedtls.tar.bz2 -C assets
 	rm assets/mbedtls.tar.bz2
 
-# Seeded once. Dolphin's Wii Menu writes to this file afterwards.
+# The first run copies the sample into Dolphin's NAND. Dolphin's Wii Menu
+# writes to this file afterwards, so later runs keep it.
 $(DOLPHIN_BOARD):
 	mkdir -p $(dir $@)
 	cp samples/cdb.vff $@
 
-.PHONY: test wii sd dolphin shots clean
+$(DEVKIT_HEADERS):
+	mkdir -p $@.tmp
+	id=$$(docker create $(DEVKIT_IMAGE)) \
+		&& docker cp -q $$id:/opt/devkitpro/libogc/include $@.tmp/libogc \
+		&& docker cp -q $$id:/opt/devkitpro/devkitPPC/powerpc-eabi/include $@.tmp/newlib; \
+		status=$$?; docker rm $$id > /dev/null; exit $$status
+	mv $@.tmp $@
+
+.PHONY: test lint wii sd dolphin shots clean
 test: build/test_core build/test_game
 	./build/test_core
 	./build/test_game
+
+# The hooks fix formatting in place and then fail, so a second run passes.
+# The Wii build generates a header that wii/gfx.c includes.
+lint: wii $(DEVKIT_HEADERS)
+	$(PRE_COMMIT) run --all-files
+	ln -sfn ../../$(MBEDTLS)/include $(DEVKIT_HEADERS)/mbedtls
+	$(CLANG_TIDY) --quiet $(if $(SDK),--extra-arg=-isysroot$(SDK)) $(HOST_C_SOURCES)
+	$(CLANG_TIDY) --quiet $(WII_C_SOURCES)
 
 wii: build/gen/atlas.png | $(MBEDTLS)
 	$(DEVKIT)

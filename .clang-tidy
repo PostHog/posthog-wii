@@ -1,0 +1,16 @@
+# The one check left out asks for the C11 Annex K functions, such as
+# memcpy_s, which newlib and glibc do not have.
+Checks: >
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(core|game|host|tests|wii)/'
+CheckOptions:
+  # Each of these libraries documents one header as its interface.
+  misc-include-cleaner.IgnoreHeaders: 'curl/.*;ogc/.*;gctypes\.h'

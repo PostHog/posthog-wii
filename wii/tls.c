@@ -1,5 +1,7 @@
 #include "tls.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -12,18 +14,22 @@
 #include "mbedtls/platform_time.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/ssl.h"
+#include "mbedtls/ssl_ciphersuites.h"
+#include "mbedtls/x509.h"
 #include "mbedtls/x509_crt.h"
 
 #include "noise.h"
 #include "sdcard.h"
 #include "socket.h"
 
-enum { DIGEST_SIZE = 32, EXTRA_ROOTS_CAP = 16384, FAILURE_CAP = 64 };
+enum { DIGEST_SIZE = 32, EXTRA_ROOTS_CAP = 16384, FAILURE_CAP = 64, SECONDS_PER_MINUTE = 60 };
 
 /* PEM text must end in a zero byte for mbedTLS to read it. */
 static const char BUILT_IN_ROOTS[] = {
 #embed "roots.pem"
-    , 0};
+    ,
+    0,
+};
 
 /* Each suite has forward secrecy and authenticated encryption. */
 static const int SUITES[] = {
@@ -48,14 +54,14 @@ static const char *failure = "";
 /* mbedTLS documents its error codes as negative hexadecimal numbers. */
 static void fail(const char *what, int error) {
     static char text[FAILURE_CAP];
-    snprintf(text, sizeof text, "%s (error -0x%04X).", what, (unsigned)-error);
+    (void)snprintf(text, sizeof text, "%s (error -0x%04X).", what, (unsigned)-error);
     failure = text;
 }
 
 static void fail_handshake(int error) {
     /* The flags hold a result only after the certificate check has run. */
     uint32_t flags = error == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED ? mbedtls_ssl_get_verify_result(&session) : 0;
-    if (flags & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE)) {
+    if (flags & ((uint32_t)MBEDTLS_X509_BADCERT_EXPIRED | (uint32_t)MBEDTLS_X509_BADCERT_FUTURE)) {
         failure = "The host's certificate is not valid on the console's date.\nCheck the date in the Wii settings.";
     } else {
         fail("The secure connection failed", error);
@@ -68,7 +74,7 @@ void tls_set_utc_offset(int minutes) {
 
 /* The console's clock holds local time, and certificate dates are in UTC. */
 static mbedtls_time_t utc_now(mbedtls_time_t *out) {
-    mbedtls_time_t now = time(NULL) - (mbedtls_time_t)utc_offset_minutes * 60;
+    mbedtls_time_t now = time(NULL) - ((mbedtls_time_t)utc_offset_minutes * SECONDS_PER_MINUTE);
     if (out) {
         *out = now;
     }
@@ -81,10 +87,12 @@ mbedtls_ms_time_t mbedtls_ms_time(void) {
     return (mbedtls_ms_time_t)ticks_to_millisecs(gettime());
 }
 
+/* mbedTLS declares this function in a header that is not public, and links to it by name. */
+/* NOLINTNEXTLINE(misc-use-internal-linkage) */
 int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t *olen);
 
 /* mbedTLS counts every byte it gets here as fully random. The readings are
-   far from that, so many of them are hashed down to one digest. */
+   far from that, so this function hashes many of them down to one digest. */
 int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t *olen) {
     (void)data;
     static uint8_t readings[NOISE_CAP];
@@ -165,7 +173,7 @@ static bool prepare(void) {
     size_t extra_len = sdcard_read(SDCARD_ROOTS_FILE, extra_roots, sizeof extra_roots - 1);
     if (extra_len > 0) {
         extra_roots[extra_len] = '\0';
-        /* A certificate that does not parse is left out. The others still load. */
+        /* mbedTLS skips a certificate that does not parse and loads the others. */
         mbedtls_x509_crt_parse(&roots, (const unsigned char *)extra_roots, extra_len + 1);
     }
 
