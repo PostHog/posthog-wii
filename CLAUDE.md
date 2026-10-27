@@ -7,14 +7,15 @@ Two front ends share one C core: a host CLI (`wii2posthog`) and a Wii homebrew a
 
 - `make` builds `build/wii2posthog`.
 - `make test` builds and runs the tests under ASan and UBSan.
+- `make lint` builds the Wii app, runs every hook in `.pre-commit-config.yaml` on every file, then runs clang-tidy on every C file. It must pass before a commit. The hooks pin every linter but clang-tidy, which the Makefile pins.
 - `build/wii2posthog samples/cdb.vff --dry-run` prints the request bodies without sending.
 - `make wii` cross-compiles the Wii app in Docker to `build/wii/boot.elf` and `boot.dol`, then runs `tools/nand_guard.sh` on the result. The first run downloads mbedTLS into `assets/` and checks its hash.
 - `make sd HOST=https://us.i.posthog.com API_KEY=phc_... UTC_OFFSET=-04:00` builds `build/sd/apps/posthog-wii/`, the folder that goes on an SD card: `boot.dol`, `meta.xml`, `icon.png`, `settings.txt` and `seed.bin`.
-- `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_... UTC_OFFSET=-04:00` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the three values to the settings file on Dolphin's SD card, and a new seed file next to it. Its NAND is seeded once from `samples/cdb.vff`.
+- `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_... UTC_OFFSET=-04:00` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the three values to the settings file on Dolphin's SD card, and a new seed file next to it. The first run copies `samples/cdb.vff` into its NAND.
 - `make shots` builds `build/wii/debug.elf`, runs it in Dolphin, and saves its frames to `build/shots/`. Read those PNGs to check any drawing change. They are the raw 640-pixel display buffer, so on a 16:9 console the picture looks squeezed sideways.
 - `uv run tools/listener.py <dir>` is a local stand-in for PostHog capture. Point `HOST` at `http://127.0.0.1:18010` and read `<dir>/posts.log`.
 
-Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. A `-C` override with an unknown name is ignored without an error.
+Dolphin's command-line config names its graphics system `Graphics`, not `GFX`. Dolphin ignores a `-C` override with an unknown name and reports no error.
 
 A local PostHog dev stack has two capture addresses. The proxy on port 8010 listens on loopback only and routes only the host name `localhost`. For any other name, an IP address included, it answers 200 with an empty body and drops the request. Capture itself listens on port 3307 on every interface and answers `{"status":"Ok"}`, so a console on the network uses `http://<computer address>:3307`.
 
@@ -27,13 +28,14 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `core/playlog.c` | The daily play log record layout |
 | `core/ticks.c` | Wii tick time and its conversion to Unix time |
 | `core/events.c` | The PostHog event model and the request body |
+| `core/http_request.h` | The POST that a front end sends, and the type of the function that sends it |
 | `core/upload.c` | The request path, how many sessions a request carries, what answer counts as accepted, and stopping at the first failure |
 | `core/summary.c` | The one-line text form of a session that both front ends print |
 | `core/settings.c` | The settings file format and the notation for a UTC offset |
 | `core/cursor.c` | The cursor file format, and which host and token a cursor counts for |
 | `host/http.c` | libcurl. No other file includes `curl.h` |
 | `host/main.c` | Arguments, file reading and output for the CLI |
-| `game/runner.c` | The endless runner: Max's jump, the track, collisions and the score. Portable, no drawing |
+| `game/runner.c` | The endless runner's rules for Max's jump, the track, collisions and the score. Portable code that draws nothing |
 | `game/autoplay.c` | A player that clears every fire, for the tests and the debug build |
 | `wii/nand.c` | ISFS. No other file reads the NAND |
 | `wii/readonly.c` | The replacement for `IOS_Write`, linked into every Wii binary |
@@ -45,9 +47,9 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | `wii/roots.pem` | The root certificates every build trusts: Amazon Root CA 1 to 4 and Starfield Services Root CA G2. Amazon signs PostHog Cloud and asks a client with its own trust list to hold all five (https://www.amazontrust.com/repository/) |
 | `wii/noise.c` | The readings that the TLS random number generator mixes with its seed file |
 | `wii/gfx.c` | GX. No other file draws |
-| `wii/play.c` | The game loop: Wii Remote input, the scenery and its colors, the score digits |
-| `wii/main.c` | The app's entry point: the text console and the sync flow |
-| `wii/debug.c` | The debug build's entry point: scripted play and frame capture |
+| `wii/play.c` | The game loop, with Wii Remote input, the scenery and its colors, and the score digits |
+| `wii/main.c` | The app's entry point, which runs the text console and the sync |
+| `wii/debug.c` | The debug build's entry point, which plays a script and captures frames |
 | `wii/meta.xml` | The name and description that the Homebrew Channel shows |
 | `tools/atlas.py` | Packs the pictures into one Wii texture |
 | `tools/icon.py` | Makes the Homebrew Channel icon |
@@ -73,7 +75,8 @@ These follow "A Philosophy of Software Design".
 - `core/` compiles with both Apple clang and devkitPPC GCC. Run `make test` and `make wii` after a change to it, because each compiler rejects code the other accepts.
 - `core/` and `game/` are portable: no libogc types, no host-only headers, no heap allocation, no global mutable state.
 - Every read of image data goes through `core/bytes.h`. Never cast a buffer to a struct and never index image data directly.
-- Buffer sizes are compile-time constants, checked with `_Static_assert` where one depends on another.
+- Buffer sizes are compile-time constants, checked with `static_assert` where one depends on another.
+- `.clang-tidy` enables every check in its families, except the one that asks for the C11 Annex K functions, which newlib and glibc do not have. Fix a finding in the code. A `NOLINT` comment is allowed only where something outside the code fixes a name, a linkage or a signature (the linker's `--wrap`, an mbedTLS callback, `qsort`). It names each check, and a comment above it names that outside requirement.
 - Fixed-width integer types for anything that comes from a file.
 
 ## Comments
@@ -100,9 +103,9 @@ A user's console must still start after any run of this software. This rule come
 - **A new mbedTLS version changes `MBEDTLS_VERSION` and `MBEDTLS_SHA256` together.** Take the hash from the release page, not from the download.
 - **A new version of an npm package changes its version and its hash together, and a new `DEVKIT_IMAGE` tag changes its digest.** Take the hash from `dist.integrity` in the registry's answer for that version, and the digest from the registry that holds the image.
 - **The TLS keys start from the seed file that `make sd` writes on the computer.** A Wii gives an app no random number source. mbedTLS mixes the file with the readings in `wii/noise.c`, replaces the file before it gives out a random byte, and fails without it. Never make the seed optional, and never remove a source.
-- **The app writes two files, both on the SD card: the cursor and the random seed.** `sdcard_write` is the only function that mounts the card for writing. A new file to write needs a reason as strong as theirs.
+- **The app writes two files, the cursor and the random seed, both on the SD card.** `sdcard_write` is the only function that mounts the card for writing. A new file to write needs a reason as strong as theirs.
 - **Dolphin loses SD card writes when it is killed.** Its window does not stop on a signal, so a second run cannot see what the first one wrote. Test a write and its read inside one run.
-- `samples/` and `*.vff` are never committed. A dump holds the owner's messages, photos and a console ID.
+- Never commit `samples/` or a `*.vff` file. The pre-commit hook refuses both. A dump holds the owner's messages, photos and a console ID.
 - Committed fixtures are synthetic. Do not derive one from a real dump.
 - `playlog.c` never parses the sent-message buffer that follows the sessions. It holds friend names.
 
@@ -113,7 +116,7 @@ A console can need libpatcher (WiiLink24, MIT) before IOS lets the app open the 
 - Check that `HW_AHBPROT` (`0x0D800064`) reads `0xFFFFFFFF` before any patch. libpatcher does not check.
 - Call only `patch_ahbprot_reset` and `patch_isfs_permissions`, and call them before WPAD, ISFS and the network start, because the first one reloads IOS.
 - Never call `apply_patches`, `patch_ios_verify`, `patch_es_identify`, `ES_Identify` or `ES_SetUID`. Never depend on a custom IOS.
-- `patch_isfs_permissions` removes the permission check for writes too, until the next IOS reload. The write block above is what stops libogc from using that.
+- `patch_isfs_permissions` removes the permission check for writes too, until the next IOS reload. The write block above stops libogc from using that gap.
 - A missing `HW_AHBPROT` or a patch that returns false means no sync. The game still runs.
 - A mode that Priiloader starts at every power-on must never call `exit`, must end by writing Priiloader's "Pune" word and launching the Wii Menu, and must bound its total run time. A Wii mini and a Wii U have no RESET button to escape a hang.
 
@@ -122,7 +125,7 @@ Sources: WiiBrew (`Brick`, `/dev/fs`, `/dev/es`, `Hardware/NAND`), HackMii, wii.
 ## Provenance
 
 - Format facts come from WiiBrew, the Riiwind parser (MIT) and the System Menu decompilation. Reimplement the facts. Never copy code from the decompilation, from leaked SDK material, or from a repository without a license (`cdbackup`, `WiiVFF`).
-- The play log layout was checked against a real dump from system menu 4.3.
+- A real dump from system menu 4.3 confirms the play log layout.
 
 ## Brand
 

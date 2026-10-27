@@ -12,17 +12,29 @@ enum { GFX_HEIGHT = 480 };
 /* Takes over the display from the text console. Returns the canvas width. */
 float gfx_init(void);
 
-void gfx_rect(float x, float y, float width, float height, uint32_t rgb);
+typedef struct {
+    float x;
+    float y;
+} gfx_point;
 
-/* Draws one cell of the sprite atlas with its top-left corner at x, y, at
+void gfx_rect(float left, float top, float width, float height, uint32_t rgb);
+
+/* Draws one cell of the sprite atlas with its top-left corner at corner, at
    scale times its size. Each sprite pixel stays a square. */
-void gfx_frame(float x, float y, unsigned frame, unsigned scale);
+void gfx_frame(unsigned frame, gfx_point corner, unsigned scale);
 
 /* Shows what was drawn since the last call and waits for the next frame. */
 void gfx_present(void);
 
-/* The display buffer that the last gfx_present showed. It is len bytes, and
-   every four bytes hold two pixels as Y0, Cb, Y1, Cr. For debug builds. */
-const uint8_t *gfx_displayed(unsigned *width, unsigned *height, size_t *len);
+/* Every four bytes of pixels hold two pixels as Y0, Cb, Y1, Cr. */
+typedef struct {
+    const uint8_t *pixels;
+    size_t len;
+    unsigned width;
+    unsigned height;
+} gfx_picture;
+
+/* The display buffer that the last gfx_present showed. For debug builds. */
+gfx_picture gfx_displayed(void);
 
 #endif

@@ -1,5 +1,7 @@
 #include "http.h"
+#include "http_request.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -13,7 +15,7 @@ typedef struct {
     size_t len;
 } answer_buffer;
 
-static size_t keep_start(char *data, size_t size, size_t count, void *ctx) {
+static size_t keep_start(const char *data, size_t size, size_t count, void *ctx) {
     answer_buffer *answer = ctx;
     size_t total = size * count;
     for (size_t i = 0; i < total && answer->len + 1 < answer->cap; i++) {
@@ -22,36 +24,37 @@ static size_t keep_start(char *data, size_t size, size_t count, void *ctx) {
     return total;
 }
 
-long http_post(const char *host, const char *path, const char *content_type, const void *body, size_t body_len,
-               char *answer, size_t answer_cap) {
+long http_post(const http_request *request, char *answer, size_t answer_cap) {
     /* One handle for the whole run lets libcurl reuse the connection. */
     static CURL *curl;
-    if (!curl && !(curl = curl_easy_init())) {
+    if (!curl) {
+        curl = curl_easy_init();
+    }
+    if (!curl) {
         return 0;
     }
 
-    size_t host_len = strlen(host);
-    while (host_len > 0 && host[host_len - 1] == '/') {
+    size_t host_len = strlen(request->host);
+    while (host_len > 0 && request->host[host_len - 1] == '/') {
         host_len--;
     }
     char url[URL_CAP];
-    snprintf(url, sizeof url, "%.*s%s", (int)host_len, host, path);
+    (void)snprintf(url, sizeof url, "%.*s%s", (int)host_len, request->host, request->path);
     char header[HEADER_CAP];
-    snprintf(header, sizeof header, "Content-Type: %s", content_type);
+    (void)snprintf(header, sizeof header, "Content-Type: %s", request->content_type);
 
     answer_buffer kept = {.text = answer, .cap = answer_cap};
     struct curl_slist *headers = curl_slist_append(NULL, header);
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)body_len);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, keep_start);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &kept);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)TIMEOUT_SECONDS);
-
     long status = 0;
-    if (curl_easy_perform(curl) == CURLE_OK) {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    if (headers && curl_easy_setopt(curl, CURLOPT_URL, url) == CURLE_OK &&
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) == CURLE_OK &&
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request->body) == CURLE_OK &&
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)request->body_len) == CURLE_OK &&
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, keep_start) == CURLE_OK &&
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &kept) == CURLE_OK &&
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)TIMEOUT_SECONDS) == CURLE_OK &&
+        curl_easy_perform(curl) == CURLE_OK && curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status) != CURLE_OK) {
+        status = 0;
     }
     if (answer_cap > 0) {
         answer[kept.len] = '\0';

@@ -1,4 +1,7 @@
+#include <limits.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +10,7 @@
 #include "check.h"
 #include "cursor.h"
 #include "events.h"
+#include "http_request.h"
 #include "playlog.h"
 #include "settings.h"
 #include "sha1.h"
@@ -15,44 +19,101 @@
 #include "upload.h"
 
 enum {
-    IMAGE_SIZE = 0x280000,
-    CLUSTER_SIZE = 0x200,
-    FAT_OFFSET = 0x20,
-    FAT_SIZE = IMAGE_SIZE / CLUSTER_SIZE * 2,
-    ROOT_OFFSET = FAT_OFFSET + 2 * FAT_SIZE,
+    VFF_HEADER_BYTE_ORDER = 0x04,
+    VFF_HEADER_VERSION = 0x06,
+    VFF_HEADER_VOLUME_SIZE = 0x08,
+    VFF_HEADER_CLUSTER_SIZE = 0x0C,
+    VFF_HEADER_SIZE = 0x20,
+    VFF_BYTE_ORDER = 0xFEFF,
+    VFF_VERSION = 0x0100,
+    VFF_CLUSTER_SIZE_UNIT = 16,
+
+    FAT_ENTRY_SIZE = 2,
+    FAT_CHAIN_END = 0xFFFF,
+    FIRST_DATA_CLUSTER = 2,
+    ROOT_ENTRIES = 128,
+
     DIRENT_SIZE = 0x20,
-    DATA_OFFSET = ROOT_OFFSET + 128 * DIRENT_SIZE,
-    ENTRIES_PER_CLUSTER = CLUSTER_SIZE / DIRENT_SIZE,
-
-    CDBFILE_SIZE = 0x400,
-    ATTACHMENT_OFFSET = 0x220,
-    ATTACHMENT_SIZE = 0x668,
-    LOG_SIZE = CDBFILE_SIZE + ATTACHMENT_OFFSET + ATTACHMENT_SIZE,
-    LOG_CLUSTERS = 7,
-    ENTRY_SIZE = 0x88,
-
+    DIRENT_NAME_SIZE = 11,
+    DIRENT_ATTRIBUTES = 11,
+    DIRENT_FIRST_CLUSTER = 26,
+    DIRENT_FILE_SIZE = 28,
+    DIRENT_DELETED = 0xE5,
+    ATTR_NONE = 0x00,
     ATTR_VOLUME = 0x08,
     ATTR_LONG_NAME = 0x0F,
     ATTR_DIRECTORY = 0x10,
-    DELETED = 0xE5,
+
+    CDBFILE_CONSOLE_ID = 0x08,
+    CDBFILE_DESCRIPTION = 0x14,
+    CDBFILE_SIZE = 0x400,
+    RECORD_MAGIC = 0x52495F35,
+    RECORD_ATTACHMENT_TYPE = 0x128,
+    RECORD_ATTACHMENT_OFFSET = 0x12C,
+    RECORD_ATTACHMENT_SIZE = 0x130,
+    ATTACHMENT_TYPE_PLAY_LOG = 3,
+    LOG_MAGIC = 0x30335F30,
+    LOG_HEADER_SIZE = 8,
+
+    ENTRY_SIZE = 0x88,
+    ENTRY_IN_USE = 0x00,
+    ENTRY_TITLE = 0x0C,
+    ENTRY_START_TICKS = 0x60,
+    ENTRY_END_TICKS = 0x68,
+    ENTRY_GAME_CODE = 0x70,
+    ENTRY_MAKER_CODE = 0x74,
+    TITLE_LINES = 2,
+    TITLE_LINE_SIZE = 42,
+    UTF16_UNIT_SIZE = 2,
+};
+
+enum {
+    IMAGE_SIZE = 0x280000,
+    CLUSTER_SIZE = 0x200,
+    FAT_OFFSET = VFF_HEADER_SIZE,
+    FAT_SIZE = IMAGE_SIZE / CLUSTER_SIZE * FAT_ENTRY_SIZE,
+    ROOT_OFFSET = FAT_OFFSET + (2 * FAT_SIZE),
+    DATA_OFFSET = ROOT_OFFSET + (ROOT_ENTRIES * DIRENT_SIZE),
+    ENTRIES_PER_CLUSTER = CLUSTER_SIZE / DIRENT_SIZE,
+
+    ATTACHMENT_OFFSET = 0x220,
+    ATTACHMENT_SIZE = 0x668,
+    ATTACHMENT_PAST_THE_FILE = 0xFFFFFF,
+    LOG_SIZE = CDBFILE_SIZE + ATTACHMENT_OFFSET + ATTACHMENT_SIZE,
+    LOG_CLUSTERS = 7,
 
     YEAR_DIR_HEAD = 2,
     YEAR_DIR_TAIL = 9,
     LOG_DIR = 5,
     COLLECT_CAP = 16,
+    JSON_VALUE_CAP = 64,
+
+    /* 2022-11-15 21:44:24 console local time. */
+    START_SECONDS = 721863864,
+    UNIX_SECONDS_AT_2000 = 946684800,
+    MS_PER_SECOND = 1000,
+    UUID_TIME_LOW_RANGE = 0x10000,
+    PUERTO_RICO_OFFSET_MINUTES = -240,
+    SAVED_OFFSET_MINUTES = 60,
+    HTTP_SERVER_ERROR = 500,
 };
 
-static const unsigned LOG_FILE[LOG_CLUSTERS] = {20, 30, 21, 40, 22, 41, 23};
-static const unsigned MAIL_FILE[LOG_CLUSTERS] = {50, 51, 52, 53, 54, 55, 56};
+static const uint16_t LOG_FILE[LOG_CLUSTERS] = {20, 30, 21, 40, 22, 41, 23};
+static const uint16_t MAIL_FILE[LOG_CLUSTERS] = {50, 51, 52, 53, 54, 55, 56};
 
-static const uint64_t CONSOLE_ID = 0x0123456789ABCDEFull;
-/* 2022-11-15 21:44:24 console local time. */
-static const uint64_t START = (uint64_t)TICKS_PER_SECOND * 721863864;
+static const uint8_t VFF_MAGIC[] = {'V', 'F', 'F', ' '};
+static const uint8_t CDBFILE_MAGIC[] = {'C', 'D', 'B', 'F', 'I', 'L', 'E', 2};
+static const char LOG_DESCRIPTION[] = "playtimelog";
+static const char MAIL_DESCRIPTION[] = "mail";
+static const uint8_t MAKER_CODE[] = {'0', '1'};
+
+static const uint64_t CONSOLE_ID = 0x0123456789ABCDEFULL;
+static const uint64_t START = (uint64_t)TICKS_PER_SECOND * START_SECONDS;
 static const uint64_t SECOND = TICKS_PER_SECOND;
 
 static const uint16_t MARIO_KART[] = {'M', 'a', 'r', 'i', 'o', ' ', 'K', 'a', 'r', 't', ' ', 'W', 'i', 'i', 0};
 static const uint16_t SUMABURA[] = {0x30B9, 0x30DE, 0x30D6, 0x30E9, 0};
-static const uint16_t X[] = {'X', 0};
+static const uint16_t LETTER_X[] = {'X', 0};
 
 typedef struct {
     const char *code;
@@ -76,67 +137,96 @@ static void collect(void *ctx, const playlog_session *session) {
     found->count++;
 }
 
-static void put_le(uint8_t *out, uint32_t value, int size) {
-    for (int i = 0; i < size; i++) {
-        out[i] = (uint8_t)(value >> (8 * i));
-    }
+static void put_le16(uint8_t *out, uint16_t value) {
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> CHAR_BIT);
+}
+
+static void put_le32(uint8_t *out, uint32_t value) {
+    put_le16(out, (uint16_t)value);
+    put_le16(out + sizeof(uint16_t), (uint16_t)(value >> (CHAR_BIT * sizeof(uint16_t))));
 }
 
 static void put_entry(uint8_t *entry, entry_spec spec) {
-    const uint16_t *lines[2] = {spec.line1, spec.line2};
-    entry[0] = spec.in_use;
-    for (int line = 0; line < 2; line++) {
-        for (int i = 0; lines[line] && lines[line][i]; i++) {
-            put_be(entry + 0x0C + line * 42 + i * 2, lines[line][i], 2);
+    const uint16_t *lines[TITLE_LINES] = {spec.line1, spec.line2};
+    entry[ENTRY_IN_USE] = (uint8_t)spec.in_use;
+    for (size_t line = 0; line < TITLE_LINES; line++) {
+        uint8_t *title_line = entry + ENTRY_TITLE + (line * TITLE_LINE_SIZE);
+        for (size_t unit = 0; lines[line] && lines[line][unit]; unit++) {
+            put_be(title_line + (unit * UTF16_UNIT_SIZE), lines[line][unit], UTF16_UNIT_SIZE);
         }
     }
-    put_be(entry + 0x60, spec.start, 8);
-    put_be(entry + 0x68, spec.end, 8);
-    memcpy(entry + 0x70, spec.code, 4);
-    memcpy(entry + 0x74, "01", 2);
+    put_be(entry + ENTRY_START_TICKS, spec.start, sizeof spec.start);
+    put_be(entry + ENTRY_END_TICKS, spec.end, sizeof spec.end);
+    memcpy(entry + ENTRY_GAME_CODE, spec.code, 4);
+    memcpy(entry + ENTRY_MAKER_CODE, MAKER_CODE, sizeof MAKER_CODE);
 }
 
-static void build_log(uint8_t log[LOG_SIZE], const entry_spec *entries, int count) {
+static void build_log(uint8_t log[LOG_SIZE], const entry_spec *entries, size_t count) {
     memset(log, 0, LOG_SIZE);
-    memcpy(log, "CDBFILE\x02", 8);
-    put_be(log + 0x08, CONSOLE_ID, 8);
-    strcpy((char *)log + 0x14, "playtimelog");
+    memcpy(log, CDBFILE_MAGIC, sizeof CDBFILE_MAGIC);
+    put_be(log + CDBFILE_CONSOLE_ID, CONSOLE_ID, sizeof CONSOLE_ID);
+    memcpy(log + CDBFILE_DESCRIPTION, LOG_DESCRIPTION, sizeof LOG_DESCRIPTION);
 
     uint8_t *record = log + CDBFILE_SIZE;
-    put_be(record, 0x52495F35, 4);
-    put_be(record + 0x128, 3, 4);
-    put_be(record + 0x12C, ATTACHMENT_OFFSET, 4);
-    put_be(record + 0x130, ATTACHMENT_SIZE, 4);
+    put_be(record, RECORD_MAGIC, 4);
+    put_be(record + RECORD_ATTACHMENT_TYPE, ATTACHMENT_TYPE_PLAY_LOG, 4);
+    put_be(record + RECORD_ATTACHMENT_OFFSET, ATTACHMENT_OFFSET, 4);
+    put_be(record + RECORD_ATTACHMENT_SIZE, ATTACHMENT_SIZE, 4);
 
     uint8_t *attachment = record + ATTACHMENT_OFFSET;
-    put_be(attachment, 0x30335F30, 4);
-    attachment += 8;
-    for (int i = 0; i < count; i++) {
-        put_entry(attachment + i * ENTRY_SIZE, entries[i]);
+    put_be(attachment, LOG_MAGIC, 4);
+    attachment += LOG_HEADER_SIZE;
+    for (size_t i = 0; i < count; i++) {
+        put_entry(attachment + (i * ENTRY_SIZE), entries[i]);
     }
 }
 
-static uint8_t *cluster(uint8_t *image, unsigned number) {
-    return image + DATA_OFFSET + (size_t)(number - 2) * CLUSTER_SIZE;
+static uint8_t *cluster(uint8_t *image, uint16_t number) {
+    return image + DATA_OFFSET + ((size_t)(number - FIRST_DATA_CLUSTER) * CLUSTER_SIZE);
 }
 
-static void link_chain(uint8_t *image, const unsigned *chain, int count) {
-    for (int i = 0; i < count; i++) {
-        put_le(image + FAT_OFFSET + chain[i] * 2, i + 1 < count ? chain[i + 1] : 0xFFFF, 2);
+static uint8_t *fat_entry(uint8_t *image, uint16_t number) {
+    return image + FAT_OFFSET + ((size_t)number * FAT_ENTRY_SIZE);
+}
+
+static void link_chain(uint8_t *image, const uint16_t *chain, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        put_le16(fat_entry(image, chain[i]), (uint16_t)(i + 1 < count ? chain[i + 1] : FAT_CHAIN_END));
     }
 }
 
-static void put_dirent(uint8_t *slot, const char *name, uint8_t attributes, unsigned first_cluster, uint32_t size) {
-    memset(slot, ' ', 11);
-    memcpy(slot, name, strlen(name));
-    slot[11] = attributes;
-    put_le(slot + 26, first_cluster, 2);
-    put_le(slot + 28, size, 4);
+static uint8_t *dirent_at(uint8_t *directory, size_t index) {
+    return directory + (index * DIRENT_SIZE);
 }
 
-static void store_file(uint8_t *image, const unsigned *chain, const uint8_t *data) {
-    for (int i = 0; i < LOG_CLUSTERS; i++) {
-        size_t offset = (size_t)i * CLUSTER_SIZE;
+static void put_dirent(uint8_t *slot, const char *name, uint8_t attributes) {
+    memset(slot, ' ', DIRENT_NAME_SIZE);
+    for (size_t i = 0; name[i] != '\0'; i++) {
+        slot[i] = (uint8_t)name[i];
+    }
+    slot[DIRENT_ATTRIBUTES] = attributes;
+}
+
+static void put_directory(uint8_t *slot, const char *name, uint16_t first_cluster) {
+    put_dirent(slot, name, ATTR_DIRECTORY);
+    put_le16(slot + DIRENT_FIRST_CLUSTER, first_cluster);
+}
+
+static void put_file(uint8_t *slot, const char *name, uint8_t attributes, const uint16_t *chain) {
+    put_dirent(slot, name, attributes);
+    put_le16(slot + DIRENT_FIRST_CLUSTER, chain[0]);
+    put_le32(slot + DIRENT_FILE_SIZE, LOG_SIZE);
+}
+
+static void put_deleted(uint8_t *slot) {
+    put_file(slot, "REMOVED", ATTR_NONE, LOG_FILE);
+    slot[0] = DIRENT_DELETED;
+}
+
+static void store_file(uint8_t *image, const uint16_t *chain, const uint8_t *data) {
+    for (size_t i = 0; i < LOG_CLUSTERS; i++) {
+        size_t offset = i * CLUSTER_SIZE;
         size_t len = LOG_SIZE - offset < CLUSTER_SIZE ? LOG_SIZE - offset : CLUSTER_SIZE;
         memcpy(cluster(image, chain[i]), data + offset, len);
     }
@@ -149,38 +239,36 @@ static void store_file(uint8_t *image, const unsigned *chain, const uint8_t *dat
    reports duplicate sessions. */
 static uint8_t *build_image(const uint8_t *log) {
     uint8_t *image = calloc(1, IMAGE_SIZE);
-    memcpy(image, "VFF ", 4);
-    put_be(image + 0x04, 0xFEFF, 2);
-    put_be(image + 0x06, 0x0100, 2);
-    put_be(image + 0x08, IMAGE_SIZE, 4);
-    put_be(image + 0x0C, CLUSTER_SIZE >> 4, 2);
+    memcpy(image, VFF_MAGIC, sizeof VFF_MAGIC);
+    put_be(image + VFF_HEADER_BYTE_ORDER, VFF_BYTE_ORDER, 2);
+    put_be(image + VFF_HEADER_VERSION, VFF_VERSION, 2);
+    put_be(image + VFF_HEADER_VOLUME_SIZE, IMAGE_SIZE, 4);
+    put_be(image + VFF_HEADER_CLUSTER_SIZE, CLUSTER_SIZE / VFF_CLUSTER_SIZE_UNIT, 2);
 
     uint8_t *root = image + ROOT_OFFSET;
-    put_dirent(root, "LABEL", ATTR_VOLUME, LOG_FILE[0], LOG_SIZE);
-    put_dirent(root + DIRENT_SIZE, "REMOVED", 0, LOG_FILE[0], LOG_SIZE);
-    root[DIRENT_SIZE] = DELETED;
-    put_dirent(root + 2 * DIRENT_SIZE, "2022", ATTR_DIRECTORY, YEAR_DIR_HEAD, 0);
-    put_dirent(root + 3 * DIRENT_SIZE, "MAIL", 0, MAIL_FILE[0], LOG_SIZE);
+    put_file(dirent_at(root, 0), "LABEL", ATTR_VOLUME, LOG_FILE);
+    put_deleted(dirent_at(root, 1));
+    put_directory(dirent_at(root, 2), "2022", YEAR_DIR_HEAD);
+    put_file(dirent_at(root, 3), "MAIL", ATTR_NONE, MAIL_FILE);
 
     uint8_t *year_head = cluster(image, YEAR_DIR_HEAD);
-    put_dirent(year_head, ".", ATTR_DIRECTORY, YEAR_DIR_HEAD, 0);
-    put_dirent(year_head + DIRENT_SIZE, "..", ATTR_DIRECTORY, YEAR_DIR_HEAD, 0);
-    for (int i = 2; i < ENTRIES_PER_CLUSTER; i++) {
-        put_dirent(year_head + i * DIRENT_SIZE, "REMOVED", 0, LOG_FILE[0], LOG_SIZE);
-        year_head[i * DIRENT_SIZE] = DELETED;
+    put_directory(dirent_at(year_head, 0), ".", YEAR_DIR_HEAD);
+    put_directory(dirent_at(year_head, 1), "..", YEAR_DIR_HEAD);
+    for (size_t i = 2; i < ENTRIES_PER_CLUSTER; i++) {
+        put_deleted(dirent_at(year_head, i));
     }
     uint8_t *year_tail = cluster(image, YEAR_DIR_TAIL);
-    put_dirent(year_tail, "LONGNAME", ATTR_LONG_NAME, LOG_FILE[0], LOG_SIZE);
-    put_dirent(year_tail + DIRENT_SIZE, "LOG", ATTR_DIRECTORY, LOG_DIR, 0);
-    link_chain(image, (const unsigned[]){YEAR_DIR_HEAD, YEAR_DIR_TAIL}, 2);
+    put_file(dirent_at(year_tail, 0), "LONGNAME", ATTR_LONG_NAME, LOG_FILE);
+    put_directory(dirent_at(year_tail, 1), "LOG", LOG_DIR);
+    link_chain(image, (const uint16_t[]){YEAR_DIR_HEAD, YEAR_DIR_TAIL}, 2);
 
-    put_dirent(cluster(image, LOG_DIR), "2B06C4C3000", 0, LOG_FILE[0], LOG_SIZE);
-    link_chain(image, (const unsigned[]){LOG_DIR}, 1);
+    put_file(cluster(image, LOG_DIR), "2B06C4C3000", ATTR_NONE, LOG_FILE);
+    link_chain(image, (const uint16_t[]){LOG_DIR}, 1);
     store_file(image, LOG_FILE, log);
 
     uint8_t mail[LOG_SIZE];
     memcpy(mail, log, LOG_SIZE);
-    strcpy((char *)mail + 0x14, "mail");
+    memcpy(mail + CDBFILE_DESCRIPTION, MAIL_DESCRIPTION, sizeof MAIL_DESCRIPTION);
     store_file(image, MAIL_FILE, mail);
     return image;
 }
@@ -191,7 +279,7 @@ static collected sessions_in(const uint8_t *image, size_t len) {
     return found;
 }
 
-static collected sessions_in_log(const entry_spec *entries, int count) {
+static collected sessions_in_log(const entry_spec *entries, size_t count) {
     uint8_t log[LOG_SIZE];
     build_log(log, entries, count);
     uint8_t *image = build_image(log);
@@ -202,9 +290,9 @@ static collected sessions_in_log(const entry_spec *entries, int count) {
 
 static void test_reads_sessions_from_a_fragmented_image(void) {
     const entry_spec entries[] = {
-        {"RMCE", MARIO_KART, NULL, START, START + 5400 * SECOND, true},
+        {"RMCE", MARIO_KART, NULL, START, START + (5400 * SECOND), true},
         {"RZDE", MARIO_KART, NULL, START, START + SECOND, false},
-        {"RSBJ", SUMABURA, X, START + 6000 * SECOND, START + 6060 * SECOND, true},
+        {"RSBJ", SUMABURA, LETTER_X, START + (6000 * SECOND), START + (6060 * SECOND), true},
     };
     collected found = sessions_in_log(entries, 3);
 
@@ -214,7 +302,7 @@ static void test_reads_sessions_from_a_fragmented_image(void) {
     CHECK(strcmp(found.items[0].maker_code, "01") == 0);
     CHECK(strcmp(found.items[0].title, "Mario Kart Wii") == 0);
     CHECK(found.items[0].start_ticks == START);
-    CHECK(found.items[0].end_ticks == START + 5400 * SECOND);
+    CHECK(found.items[0].end_ticks == START + (5400 * SECOND));
     CHECK(strcmp(found.items[1].game_code, "RSBJ") == 0);
     CHECK(strcmp(found.items[1].title, "\xE3\x82\xB9\xE3\x83\x9E\xE3\x83\x96\xE3\x83\xA9 X") == 0);
 }
@@ -241,8 +329,8 @@ static void test_survives_damaged_images(void) {
     const size_t truncated_lengths[] = {
         0,
         0x1F,
-        FAT_OFFSET + FAT_SIZE / 2,
-        ROOT_OFFSET + 2 * DIRENT_SIZE,
+        FAT_OFFSET + (FAT_SIZE / 2),
+        ROOT_OFFSET + (2 * DIRENT_SIZE),
         DATA_OFFSET + 0x100,
         (size_t)(cluster(image, LOG_FILE[3]) - image),
         (size_t)(cluster(image, LOG_FILE[6]) - image) + 0x10,
@@ -259,51 +347,57 @@ static void test_survives_damaged_images(void) {
     /* A directory with no end marker whose last cluster links back to its
        first one. The walk must still return. */
     uint8_t *year_tail = cluster(image, YEAR_DIR_TAIL);
-    for (int i = 2; i < ENTRIES_PER_CLUSTER; i++) {
-        year_tail[i * DIRENT_SIZE] = DELETED;
+    for (size_t i = 2; i < ENTRIES_PER_CLUSTER; i++) {
+        dirent_at(year_tail, i)[0] = DIRENT_DELETED;
     }
-    put_le(image + FAT_OFFSET + YEAR_DIR_TAIL * 2, YEAR_DIR_HEAD, 2);
+    put_le16(fat_entry(image, YEAR_DIR_TAIL), YEAR_DIR_HEAD);
     CHECK(sessions_in(image, IMAGE_SIZE).count == 1);
     free(image);
 
-    put_be(log + CDBFILE_SIZE + 0x130, 0xFFFFFF, 4);
+    put_be(log + CDBFILE_SIZE + RECORD_ATTACHMENT_SIZE, ATTACHMENT_PAST_THE_FILE, 4);
     image = build_image(log);
     CHECK(sessions_in(image, IMAGE_SIZE).count == 0);
     free(image);
 }
 
-static void json_field(const char *json, const char *key, int occurrence, char out[64]) {
-    char pattern[32];
-    snprintf(pattern, sizeof pattern, "\"%s\":\"", key);
+typedef struct {
+    char text[JSON_VALUE_CAP];
+} json_value;
+
+/* Returns the string value of the field named key at its occurrence-th
+   appearance in json, counting from 0. A missing field gives "". */
+static json_value json_string(const char *json, int occurrence, const char *key) {
+    json_value value = {0};
+    char pattern[JSON_VALUE_CAP];
+    (void)snprintf(pattern, sizeof pattern, "\"%s\":\"", key);
     const char *found = json;
     for (int i = 0; i <= occurrence && found; i++) {
         found = strstr(i == 0 ? found : found + 1, pattern);
     }
-    out[0] = '\0';
     if (found) {
         found += strlen(pattern);
         size_t len = strcspn(found, "\"");
-        memcpy(out, found, len < 63 ? len : 63);
-        out[len < 63 ? len : 63] = '\0';
+        memcpy(value.text, found, len < sizeof value.text ? len : sizeof value.text - 1);
     }
+    return value;
 }
 
 static void test_builds_the_batch_body(void) {
-    playlog_session session = {
+    const playlog_session session = {
         .console_id = CONSOLE_ID,
-        .start_ticks = START + SECOND / 2,
-        .end_ticks = START + SECOND / 2 + 11 * SECOND,
+        .start_ticks = START + (SECOND / 2),
+        .end_ticks = START + (SECOND / 2) + (11 * SECOND),
         .game_code = "HAAA",
         .maker_code = "01",
         .title = "Say \"hi\"\\\n",
     };
-    events_config puerto_rico = {.api_key = "phc_test", .utc_offset_minutes = -240};
-    events_config utc = {.api_key = "phc_test", .utc_offset_minutes = 0};
+    const events_config puerto_rico = {.api_key = "phc_test", .utc_offset_minutes = PUERTO_RICO_OFFSET_MINUTES};
+    const events_config utc = {.api_key = "phc_test", .utc_offset_minutes = 0};
     char json[EVENTS_JSON_CAP(1)];
     char json_utc[EVENTS_JSON_CAP(1)];
 
     size_t len = events_batch_json(&puerto_rico, &session, 1, json, sizeof json);
-    events_batch_json(&utc, &session, 1, json_utc, sizeof json_utc);
+    (void)events_batch_json(&utc, &session, 1, json_utc, sizeof json_utc);
 
     static const char envelope[] = "{\"api_key\":\"phc_test\",\"historical_migration\":true,\"batch\":[";
     CHECK(len == strlen(json));
@@ -317,54 +411,57 @@ static void test_builds_the_batch_body(void) {
     CHECK(strstr(json, "\"duration_seconds\":11}") != NULL);
     CHECK(strstr(json, "sent_at") == NULL);
 
-    char started[64], ended[64], started_utc[64], session_id[64], session_id_utc[64], expected_prefix[64];
-    json_field(json, "uuid", 0, started);
-    json_field(json, "uuid", 1, ended);
-    json_field(json_utc, "uuid", 0, started_utc);
-    json_field(json, "$session_id", 0, session_id);
-    json_field(json_utc, "$session_id", 0, session_id_utc);
-    long long local_start_ms = (721863864LL + 946684800) * 1000 + 500;
-    snprintf(expected_prefix, sizeof expected_prefix, "%08llx-%04llx-7", local_start_ms >> 16, local_start_ms & 0xFFFF);
+    json_value started = json_string(json, 0, "uuid");
+    json_value ended = json_string(json, 1, "uuid");
+    json_value started_utc = json_string(json_utc, 0, "uuid");
+    json_value session_id = json_string(json, 0, "$session_id");
+    json_value session_id_utc = json_string(json_utc, 0, "$session_id");
+    uint64_t local_start_ms = (((uint64_t)START_SECONDS + UNIX_SECONDS_AT_2000) * MS_PER_SECOND) + (MS_PER_SECOND / 2);
+    char expected_prefix[JSON_VALUE_CAP];
+    (void)snprintf(expected_prefix, sizeof expected_prefix, "%08llx-%04llx-7",
+                   (unsigned long long)(local_start_ms / UUID_TIME_LOW_RANGE),
+                   (unsigned long long)(local_start_ms % UUID_TIME_LOW_RANGE));
 
-    CHECK(strlen(started) == 36 && started[14] == '5');
-    CHECK(strcmp(started, ended) != 0);
-    CHECK(strcmp(started, started_utc) == 0);
-    CHECK(strcmp(session_id, session_id_utc) == 0);
-    CHECK(strncmp(session_id, expected_prefix, strlen(expected_prefix)) == 0);
+    CHECK(strlen(started.text) == 36 && started.text[14] == '5');
+    CHECK(strcmp(started.text, ended.text) != 0);
+    CHECK(strcmp(started.text, started_utc.text) == 0);
+    CHECK(strcmp(session_id.text, session_id_utc.text) == 0);
+    CHECK(strncmp(session_id.text, expected_prefix, strlen(expected_prefix)) == 0);
 
     CHECK(events_batch_json(&utc, &session, 1, json, 64) == 0);
 }
 
+typedef struct {
+    int request; /* counted from 1, and 0 for none */
+    long status;
+} planned_failure;
+
+static const planned_failure NO_FAILURE = {0};
+
 static struct {
     int requests;
-    int fail_on_request;
-    long failure_status;
+    planned_failure failure;
     bool to_batch_path;
     size_t last_len;
     char last_end[3];
 } posted;
 
-static long record_post(const char *host, const char *path, const char *content_type, const void *body,
-                        size_t body_len, char *answer, size_t answer_cap) {
-    (void)host;
-    (void)content_type;
+static long record_post(const http_request *request, char *answer, size_t answer_cap) {
     posted.requests++;
-    posted.to_batch_path = strcmp(path, "/batch/") == 0;
-    posted.last_len = body_len;
-    memcpy(posted.last_end, body_len >= 2 ? (const char *)body + body_len - 2 : "??", 2);
-    if (posted.requests == posted.fail_on_request) {
-        return posted.failure_status;
+    posted.to_batch_path = strcmp(request->path, "/batch/") == 0;
+    posted.last_len = request->body_len;
+    memcpy(posted.last_end, request->body_len >= 2 ? (const char *)request->body + request->body_len - 2 : "??", 2);
+    if (posted.requests == posted.failure.request) {
+        return posted.failure.status;
     }
-    snprintf(answer, answer_cap, "{%s}", UPLOAD_OK_MARK);
+    (void)snprintf(answer, answer_cap, "{%s}", UPLOAD_OK_MARK);
     return UPLOAD_HTTP_OK;
 }
 
-static bool upload_sessions(upload *batch, const playlog_session *session, int count, int fail_on_request,
-                            long failure_status) {
+static bool upload_sessions(upload *batch, const playlog_session *session, int count, planned_failure failure) {
     events_config config = {.api_key = "phc_test"};
     memset(&posted, 0, sizeof posted);
-    posted.fail_on_request = fail_on_request;
-    posted.failure_status = failure_status;
+    posted.failure = failure;
     upload_begin(batch, &config, "http://example.com", record_post);
     for (int i = 0; i < count; i++) {
         upload_add(batch, session);
@@ -376,21 +473,23 @@ static void test_uploads_in_requests_and_stops_at_the_first_failure(void) {
     static upload batch;
     playlog_session session = {.game_code = "HAAA", .maker_code = "01", .title = "Photo Channel"};
 
-    CHECK(upload_sessions(&batch, &session, 2 * UPLOAD_SESSIONS_PER_REQUEST + 10, 0, 0));
+    CHECK(upload_sessions(&batch, &session, (2 * UPLOAD_SESSIONS_PER_REQUEST) + 10, NO_FAILURE));
     CHECK(posted.requests == 3);
     CHECK(posted.to_batch_path);
-    CHECK(batch.sent == 2 * UPLOAD_SESSIONS_PER_REQUEST + 10);
+    CHECK(batch.sent == (2 * UPLOAD_SESSIONS_PER_REQUEST) + 10);
 
-    CHECK(!upload_sessions(&batch, &session, 3 * UPLOAD_SESSIONS_PER_REQUEST, 2, 500));
+    const planned_failure second_request_fails = {.request = 2, .status = HTTP_SERVER_ERROR};
+    CHECK(!upload_sessions(&batch, &session, 3 * UPLOAD_SESSIONS_PER_REQUEST, second_request_fails));
     CHECK(posted.requests == 2);
     CHECK(batch.sent == UPLOAD_SESSIONS_PER_REQUEST);
-    CHECK(batch.status == 500);
+    CHECK(batch.status == HTTP_SERVER_ERROR);
 
-    CHECK(!upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, 1, UPLOAD_HTTP_OK));
+    const planned_failure first_answer_is_not_capture = {.request = 1, .status = UPLOAD_HTTP_OK};
+    CHECK(!upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, first_answer_is_not_capture));
     CHECK(batch.sent == 0);
     CHECK(batch.status == UPLOAD_NOT_CAPTURE);
 
-    CHECK(upload_sessions(&batch, &session, 0, 0, 0));
+    CHECK(upload_sessions(&batch, &session, 0, NO_FAILURE));
     CHECK(posted.requests == 0);
 }
 
@@ -399,15 +498,15 @@ static void test_a_full_request_of_the_longest_sessions_fits_its_buffer(void) {
     playlog_session session = {.game_code = "\"\\\"\\", .maker_code = "\"\\"};
     memset(session.title, '\x01', sizeof session.title - 1);
 
-    CHECK(upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, 0, 0));
+    CHECK(upload_sessions(&batch, &session, UPLOAD_SESSIONS_PER_REQUEST, NO_FAILURE));
     CHECK(posted.last_len > 0);
     CHECK(memcmp(posted.last_end, "]}", 2) == 0);
 }
 
 static void test_summarizes_a_session(void) {
-    playlog_session session = {
+    const playlog_session session = {
         .start_ticks = START,
-        .end_ticks = START + 3661 * SECOND,
+        .end_ticks = START + (3661 * SECOND),
         .game_code = "HAAA",
         .title = "Photo Channel",
     };
@@ -423,22 +522,22 @@ static void test_reads_a_settings_file_saved_by_a_text_editor(void) {
                                "api_key=phc_abc\r\n"
                                "color = red\r\n"
                                "utc_offset = -04:00";
-    settings s = {0};
-    settings_parse(&s, text, sizeof text - 1);
+    settings parsed = {0};
+    settings_parse(&parsed, text, sizeof text - 1);
 
-    CHECK(strcmp(s.host, "http://192.168.1.20:8010") == 0);
-    CHECK(strcmp(s.api_key, "phc_abc") == 0);
-    CHECK(s.utc_offset_minutes == -240);
+    CHECK(strcmp(parsed.host, "http://192.168.1.20:8010") == 0);
+    CHECK(strcmp(parsed.api_key, "phc_abc") == 0);
+    CHECK(parsed.utc_offset_minutes == PUERTO_RICO_OFFSET_MINUTES);
 }
 
 static void test_a_settings_value_that_cannot_be_used_changes_nothing(void) {
     char text[SETTINGS_VALUE_CAP * 2];
     int len = snprintf(text, sizeof text, "utc_offset = 4\napi_key = %0*d\n", SETTINGS_VALUE_CAP, 0);
-    settings s = {.api_key = "phc_abc", .utc_offset_minutes = 60};
-    settings_parse(&s, text, (size_t)len);
+    settings parsed = {.api_key = "phc_abc", .utc_offset_minutes = SAVED_OFFSET_MINUTES};
+    settings_parse(&parsed, text, (size_t)len);
 
-    CHECK(strcmp(s.api_key, "phc_abc") == 0);
-    CHECK(s.utc_offset_minutes == 60);
+    CHECK(strcmp(parsed.api_key, "phc_abc") == 0);
+    CHECK(parsed.utc_offset_minutes == SAVED_OFFSET_MINUTES);
 }
 
 static void test_a_cursor_counts_only_for_its_own_host_and_token(void) {
@@ -449,11 +548,23 @@ static void test_a_cursor_counts_only_for_its_own_host_and_token(void) {
     CHECK(cursor_read(text, len, "https://us.i.posthog.com", "phc_two") == 0);
     CHECK(cursor_read(text, len, "https://eu.i.posthog.com", "phc_one") == 0);
     CHECK(cursor_read(text, len / 2, "https://us.i.posthog.com", "phc_one") == 0);
+    CHECK(cursor_read(text, len - 2, "https://us.i.posthog.com", "phc_one") == 0);
+}
+
+static void test_a_cursor_past_the_largest_tick_count_is_ignored(void) {
+    char text[CURSOR_TEXT_CAP];
+    size_t len = cursor_write(text, "https://us.i.posthog.com", "phc_one", UINT64_MAX);
+    text[len - 1] = '0';
+    text[len++] = '\n';
+
+    CHECK(cursor_read(text, len, "https://us.i.posthog.com", "phc_one") == 0);
 }
 
 static void test_sha1_matches_the_standard_vector(void) {
-    static const uint8_t expected[SHA1_SIZE] = {0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e,
-                                               0x25, 0x71, 0x78, 0x50, 0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d};
+    static const uint8_t expected[SHA1_SIZE] = {
+        0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e,
+        0x25, 0x71, 0x78, 0x50, 0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d,
+    };
     uint8_t digest[SHA1_SIZE];
     sha1((const uint8_t *)"abc", 3, digest);
     CHECK(memcmp(digest, expected, SHA1_SIZE) == 0);
@@ -470,6 +581,7 @@ int main(void) {
     test_reads_a_settings_file_saved_by_a_text_editor();
     test_a_settings_value_that_cannot_be_used_changes_nothing();
     test_a_cursor_counts_only_for_its_own_host_and_token();
+    test_a_cursor_past_the_largest_tick_count_is_ignored();
     test_sha1_matches_the_standard_vector();
     return report();
 }

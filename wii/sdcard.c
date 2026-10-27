@@ -19,14 +19,18 @@ static bool mount(bool for_writing) {
 
 static void unmount(void) {
     /* newlib finds a device by name only when the name ends in a colon.
-       Without one it returns the default device, whatever that is. */
+       Without one it returns the default device, which need not be the card. */
     fatUnmount("sd:");
 }
 
-static FILE *open_file(const char *file, const char *mode) {
+/* Returns NULL when the path does not fit, so a cut path never opens another file. */
+static FILE *open_file(const char *file, bool for_writing) {
     char path[FILENAME_MAX];
-    snprintf(path, sizeof path, "sd:/%s", file);
-    return fopen(path, mode);
+    int len = snprintf(path, sizeof path, "sd:/%s", file);
+    if (len < 0 || (size_t)len >= sizeof path) {
+        return NULL;
+    }
+    return fopen(path, for_writing ? "wb" : "rb");
 }
 
 size_t sdcard_read(const char *file, void *out, size_t cap) {
@@ -34,10 +38,10 @@ size_t sdcard_read(const char *file, void *out, size_t cap) {
         return 0;
     }
     size_t len = 0;
-    FILE *stream = open_file(file, "rb");
+    FILE *stream = open_file(file, false);
     if (stream) {
         len = fread(out, 1, cap, stream);
-        fclose(stream);
+        (void)fclose(stream);
     }
     unmount();
     return len;
@@ -48,11 +52,13 @@ bool sdcard_write(const char *file, const void *data, size_t len) {
         return false;
     }
     bool written = false;
-    FILE *stream = open_file(file, "wb");
+    FILE *stream = open_file(file, true);
     if (stream) {
         written = fwrite(data, 1, len, stream) == len;
         /* The close sends the last bytes to the card, so it can fail too. */
-        written = fclose(stream) == 0 && written;
+        if (fclose(stream) != 0) {
+            written = false;
+        }
     }
     unmount();
     return written;

@@ -1,11 +1,17 @@
 #include "play.h"
 
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <gccore.h>
 #include <ogc/lwp_watchdog.h>
 #include <wiiuse/wpad.h>
 
 #include "atlas.h"
 #include "gfx.h"
+#include "runner.h"
 
 /* Colors from PostHog's product UI. */
 enum {
@@ -51,28 +57,33 @@ enum {
     DASH_WIDTH = 18,
     DASH_Y = GROUND_Y + 16,
 
+    NUMBER_BASE = 10,
     DIGIT_COLUMNS = 3,
     DIGIT_ROWS = 5,
     DIGIT_PIXEL = 4,
     DIGIT_PITCH = (DIGIT_COLUMNS + 1) * DIGIT_PIXEL,
     SCORE_MARGIN = 32,
-    BEST_Y = SCORE_MARGIN + (DIGIT_ROWS + 2) * DIGIT_PIXEL,
+    BEST_Y = SCORE_MARGIN + ((DIGIT_ROWS + 2) * DIGIT_PIXEL),
 
     FIRE_TICKS_PER_FRAME = 3,
 };
 
 /* Knuth's multiplicative hash constant. It spreads consecutive bar numbers
-   over unrelated heights. */
-static const unsigned HASH_MULTIPLIER = 2654435761u;
+   over unrelated heights. The high half of a product mixes better than the
+   low half. */
+static const unsigned HASH_MULTIPLIER = 2654435761U;
+static const unsigned HASH_HIGH_HALF = 16;
+
+static const u32 JUMP_BUTTONS = (u32)WPAD_BUTTON_A | (u32)WPAD_BUTTON_B | (u32)WPAD_BUTTON_UP | (u32)WPAD_BUTTON_2;
 
 /* Each digit is five rows of three pixels, top row first, left pixel in the
    highest bit. */
-static const uint8_t DIGITS[10][DIGIT_ROWS] = {
+static const uint8_t DIGITS[NUMBER_BASE][DIGIT_ROWS] = {
     {7, 5, 5, 5, 7}, {2, 6, 2, 2, 7}, {7, 1, 7, 4, 7}, {7, 1, 7, 1, 7}, {5, 5, 7, 1, 1},
     {7, 4, 7, 1, 7}, {7, 4, 7, 5, 7}, {7, 1, 2, 2, 2}, {7, 5, 7, 5, 7}, {7, 5, 7, 1, 7},
 };
 
-_Static_assert((int)RUNNER_CELL == (int)ATLAS_CELL, "the game places and hits sprites in atlas cell pixels");
+static_assert(RUNNER_CELL - ATLAS_CELL == 0, "the game places and hits sprites in atlas cell pixels");
 
 static const struct {
     unsigned first, count;
@@ -83,129 +94,153 @@ static const struct {
     [RUNNER_FALLEN] = {ATLAS_DEATH_FIRST, ATLAS_DEATH_COUNT},
 };
 
-/* Draws value with its last digit ending at right. */
-static void draw_number(float right, float y, uint32_t value, uint32_t rgb) {
-    float x = right - DIGIT_COLUMNS * DIGIT_PIXEL;
+/* The pictures and colors that every frame uses. */
+typedef struct {
+    const runner *game;
+    float width;
+    unsigned tick;
+} scene;
+
+/* Draws value with the top-right corner of its last digit at corner. */
+static void draw_number(uint32_t value, gfx_point corner, uint32_t rgb) {
+    float left = corner.x - (DIGIT_COLUMNS * DIGIT_PIXEL);
     do {
-        const uint8_t *rows = DIGITS[value % 10];
-        for (int row = 0; row < DIGIT_ROWS; row++) {
-            for (int column = 0; column < DIGIT_COLUMNS; column++) {
-                if (rows[row] & (1 << (DIGIT_COLUMNS - 1 - column))) {
-                    gfx_rect(x + (float)(column * DIGIT_PIXEL), y + (float)(row * DIGIT_PIXEL), DIGIT_PIXEL, DIGIT_PIXEL,
-                             rgb);
+        const uint8_t *rows = DIGITS[value % NUMBER_BASE];
+        for (unsigned row = 0; row < DIGIT_ROWS; row++) {
+            for (unsigned column = 0; column < DIGIT_COLUMNS; column++) {
+                if (rows[row] & (1U << (DIGIT_COLUMNS - 1U - column))) {
+                    gfx_rect(left + (float)(column * DIGIT_PIXEL), corner.y + (float)(row * DIGIT_PIXEL), DIGIT_PIXEL,
+                             DIGIT_PIXEL, rgb);
                 }
             }
         }
-        x -= DIGIT_PITCH;
-        value /= 10;
+        left -= (float)DIGIT_PITCH;
+        value /= NUMBER_BASE;
     } while (value > 0);
 }
 
 enum { SKYLINE_BARS, SKYLINE_FUNNEL, SKYLINE_TREND, SKYLINE_TABLE, SKYLINE_KINDS };
 
-typedef void column_fn(float x, unsigned index);
+/* One column of a skyline. index numbers the columns along the whole track. */
+typedef struct {
+    float left;
+    unsigned index;
+} column;
 
-/* Draws a row of columns that scrolls slower than the ground. A column
-   looks the same as it moves because its shape comes from its index. */
-static void draw_columns(const runner *game, float width, unsigned scroll_divisor, unsigned pitch, column_fn *column) {
-    unsigned scrolled = (unsigned)game->distance / scroll_divisor;
-    unsigned first = scrolled / pitch;
-    for (unsigned i = 0; (float)(i * pitch) < width + (float)pitch; i++) {
-        column((float)(i * pitch) - (float)(scrolled % pitch), first + i);
+typedef void column_fn(column place);
+
+/* A row of columns that scrolls slower than the ground. A column looks the
+   same as it moves because its shape comes from its index. */
+typedef struct {
+    unsigned scroll_divisor;
+    unsigned pitch;
+    column_fn *draw;
+} skyline;
+
+static void draw_skyline(const scene *view, const skyline *row) {
+    unsigned scrolled = (unsigned)view->game->distance / row->scroll_divisor;
+    unsigned first = scrolled / row->pitch;
+    for (unsigned i = 0; (float)(i * row->pitch) < view->width + (float)row->pitch; i++) {
+        row->draw((column){(float)(i * row->pitch) - (float)(scrolled % row->pitch), first + i});
     }
 }
 
-static void far_column(float x, unsigned index) {
-    unsigned height = FAR_MIN_HEIGHT + index * HASH_MULTIPLIER % FAR_HEIGHT_RANGE;
-    gfx_rect(x, (float)(GROUND_Y - height), FAR_WIDTH, (float)height, COLOR_FAR);
+static void far_column(column place) {
+    unsigned height = FAR_MIN_HEIGHT + (place.index * HASH_MULTIPLIER % FAR_HEIGHT_RANGE);
+    gfx_rect(place.left, (float)(GROUND_Y - height), FAR_WIDTH, (float)height, COLOR_FAR);
 }
 
 /* The run starts in a bar chart, because chapter 0 hashes to SKYLINE_BARS. */
-static void near_column(float x, unsigned index) {
-    unsigned place = index % CHAPTER_BARS;
-    unsigned noise = index * HASH_MULTIPLIER % BAR_HEIGHT_RANGE;
+static void near_column(column place) {
+    unsigned position = place.index % CHAPTER_BARS;
+    unsigned noise = place.index * HASH_MULTIPLIER % BAR_HEIGHT_RANGE;
     unsigned height = BAR_MIN_HEIGHT + noise;
-    switch (((index / CHAPTER_BARS) * HASH_MULTIPLIER >> 16) % SKYLINE_KINDS) {
+    switch (((place.index / CHAPTER_BARS) * HASH_MULTIPLIER >> HASH_HIGH_HALF) % SKYLINE_KINDS) {
     case SKYLINE_FUNNEL:
-        height = BAR_MIN_HEIGHT + BAR_HEIGHT_RANGE - place % FUNNEL_STEPS * (BAR_HEIGHT_RANGE / FUNNEL_STEPS);
+        height = BAR_MIN_HEIGHT + BAR_HEIGHT_RANGE - (position % FUNNEL_STEPS * (BAR_HEIGHT_RANGE / FUNNEL_STEPS));
         break;
     case SKYLINE_TREND:
-        height = BAR_MIN_HEIGHT + place * BAR_HEIGHT_RANGE / CHAPTER_BARS + noise % TREND_WOBBLE;
+        height = BAR_MIN_HEIGHT + (position * BAR_HEIGHT_RANGE / CHAPTER_BARS) + (noise % TREND_WOBBLE);
         break;
     case SKYLINE_TABLE:
-        for (unsigned row = 0; row < TABLE_ROWS - place % TABLE_ROWS; row++) {
-            gfx_rect(x, (float)(GROUND_Y - (row + 1) * TABLE_PITCH), BAR_WIDTH, BAR_WIDTH, COLOR_BARS);
+        for (unsigned row = 0; row < TABLE_ROWS - (position % TABLE_ROWS); row++) {
+            gfx_rect(place.left, (float)(GROUND_Y - ((row + 1) * TABLE_PITCH)), BAR_WIDTH, BAR_WIDTH, COLOR_BARS);
         }
         return;
     default:
         break;
     }
-    gfx_rect(x, (float)(GROUND_Y - height), BAR_WIDTH, (float)height, COLOR_BARS);
+    gfx_rect(place.left, (float)(GROUND_Y - height), BAR_WIDTH, (float)height, COLOR_BARS);
 }
+
+static const skyline FAR_SKYLINE = {FAR_SCROLL_DIVISOR, FAR_PITCH, far_column};
+static const skyline NEAR_SKYLINE = {BAR_SCROLL_DIVISOR, BAR_PITCH, near_column};
 
 /* Hogzilla walks the way Max runs, but slower, so he drifts from the right
    edge to the left one. */
-static void draw_hogzilla(const runner *game, float width, unsigned tick) {
-    unsigned into_lap = (unsigned)game->distance % HOGZILLA_LAP;
+static void draw_hogzilla(const scene *view) {
+    unsigned into_lap = (unsigned)view->game->distance % HOGZILLA_LAP;
     if (into_lap < HOGZILLA_ENTERS_AT) {
         return;
     }
-    float x = width - (float)(into_lap - HOGZILLA_ENTERS_AT) / HOGZILLA_SCROLL_DIVISOR;
-    if (x > -(float)(ATLAS_CELL * HOGZILLA_SCALE)) {
-        gfx_frame(x, (float)(GROUND_Y - RUNNER_MAX_FEET * HOGZILLA_SCALE),
-                  ATLAS_HOGZILLA_FIRST + tick / HOGZILLA_TICKS_PER_FRAME % ATLAS_HOGZILLA_COUNT, HOGZILLA_SCALE);
+    float left = view->width - ((float)(into_lap - HOGZILLA_ENTERS_AT) / (float)HOGZILLA_SCROLL_DIVISOR);
+    if (left > -(float)(ATLAS_CELL * HOGZILLA_SCALE)) {
+        gfx_frame(ATLAS_HOGZILLA_FIRST + (view->tick / HOGZILLA_TICKS_PER_FRAME % ATLAS_HOGZILLA_COUNT),
+                  (gfx_point){left, (float)(GROUND_Y - (RUNNER_MAX_FEET * HOGZILLA_SCALE))}, HOGZILLA_SCALE);
     }
 }
 
-static void draw_ground(const runner *game, float width) {
-    gfx_rect(0, GROUND_Y, width, GFX_HEIGHT - GROUND_Y, COLOR_GROUND);
-    unsigned scrolled = (unsigned)game->distance % DASH_PITCH;
-    for (unsigned i = 0; (float)(i * DASH_PITCH) < width + DASH_PITCH; i++) {
+static void draw_ground(const scene *view) {
+    gfx_rect(0, GROUND_Y, view->width, GFX_HEIGHT - GROUND_Y, COLOR_GROUND);
+    unsigned scrolled = (unsigned)view->game->distance % DASH_PITCH;
+    for (unsigned i = 0; (float)(i * DASH_PITCH) < view->width + (float)DASH_PITCH; i++) {
         gfx_rect((float)(i * DASH_PITCH) - (float)scrolled, DASH_Y, DASH_WIDTH, OUTLINE, COLOR_MUTED);
     }
 }
 
 static unsigned item_frame(const runner_item *item, unsigned tick) {
     if (item->kind == RUNNER_FIRE) {
-        return ATLAS_FIRE_FIRST + (tick / FIRE_TICKS_PER_FRAME + item->variant) % ATLAS_FIRE_COUNT;
+        return ATLAS_FIRE_FIRST + (((tick / FIRE_TICKS_PER_FRAME) + item->variant) % ATLAS_FIRE_COUNT);
     }
-    return ATLAS_PICKUP_FIRST + item->variant % ATLAS_PICKUP_COUNT;
+    return ATLAS_PICKUP_FIRST + (item->variant % ATLAS_PICKUP_COUNT);
 }
 
-static void draw(const runner *game, float width, unsigned tick) {
-    gfx_rect(0, 0, width, GFX_HEIGHT, COLOR_PAGE);
-    draw_columns(game, width, FAR_SCROLL_DIVISOR, FAR_PITCH, far_column);
-    draw_columns(game, width, BAR_SCROLL_DIVISOR, BAR_PITCH, near_column);
-    draw_hogzilla(game, width, tick);
-    draw_ground(game, width);
+static void draw(const scene *view) {
+    const runner *game = view->game;
+    gfx_rect(0, 0, view->width, GFX_HEIGHT, COLOR_PAGE);
+    draw_skyline(view, &FAR_SKYLINE);
+    draw_skyline(view, &NEAR_SKYLINE);
+    draw_hogzilla(view);
+    draw_ground(view);
     for (size_t i = 0; i < game->item_count; i++) {
-        gfx_frame(game->items[i].x, game->items[i].y, item_frame(&game->items[i], tick), 1);
+        const runner_item *item = &game->items[i];
+        gfx_frame(item_frame(item, view->tick), (gfx_point){item->x, item->y}, 1);
     }
-    gfx_frame(RUNNER_MAX_X, game->max_y,
-              MAX_FRAMES[game->animation].first + runner_frame(game, MAX_FRAMES[game->animation].count), 1);
+    gfx_frame(MAX_FRAMES[game->animation].first + runner_frame(game, MAX_FRAMES[game->animation].count),
+              (gfx_point){RUNNER_MAX_X, game->max_y}, 1);
 
     /* Max's sprite has a light gray contact shadow under the feet, made for
-       a white page. The ground line is drawn after him so the shadow never
-       lightens it. */
-    gfx_rect(0, GROUND_Y, width, OUTLINE, COLOR_INK);
+       a white page. The game draws the ground line after him so the shadow
+       never lightens it. */
+    gfx_rect(0, GROUND_Y, view->width, OUTLINE, COLOR_INK);
 
-    draw_number(width - SCORE_MARGIN, SCORE_MARGIN, game->score, COLOR_INK);
+    float score_right = view->width - (float)SCORE_MARGIN;
+    draw_number(game->score, (gfx_point){score_right, SCORE_MARGIN}, COLOR_INK);
     if (game->best > 0) {
-        draw_number(width - SCORE_MARGIN, BEST_Y, game->best, COLOR_MUTED);
+        draw_number(game->best, (gfx_point){score_right, BEST_Y}, COLOR_MUTED);
     }
 }
 
 static bool wiimote_jump(const runner *game, unsigned tick) {
     (void)game;
     (void)tick;
-    return (WPAD_ButtonsHeld(WPAD_CHAN_0) & (WPAD_BUTTON_A | WPAD_BUTTON_B | WPAD_BUTTON_UP | WPAD_BUTTON_2)) != 0;
+    return (WPAD_ButtonsHeld(WPAD_CHAN_0) & JUMP_BUTTONS) != 0;
 }
 
 void play_scripted(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
-    float width = gfx_init();
-
     runner game;
-    runner_init(&game, width, GROUND_Y, seed);
+    scene view = {.game = &game, .width = gfx_init()};
+    runner_init(&game, view.width, GROUND_Y, seed);
 
     for (unsigned tick = 0;; tick++) {
         WPAD_ScanPads();
@@ -213,7 +248,8 @@ void play_scripted(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
             return;
         }
         runner_step(&game, jump(&game, tick));
-        draw(&game, width, tick);
+        view.tick = tick;
+        draw(&view);
         gfx_present();
         if (shown) {
             shown(tick);
