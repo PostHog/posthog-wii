@@ -69,7 +69,7 @@ build/test_core: tests/test_core.c $(CORE) $(HEADERS) | build
 	$(CC) $(CFLAGS) -g -fsanitize=address,undefined $(filter %.c,$^) -o $@
 
 build/test_game: tests/test_game.c game/runner.c game/autoplay.c $(HEADERS) | build
-	$(CC) $(CFLAGS) -g -fsanitize=address,undefined $(filter %.c,$^) -o $@
+	$(CC) $(CFLAGS) -g -fsanitize=address,undefined $(filter %.c,$^) -lm -o $@
 
 build:
 	mkdir -p build
