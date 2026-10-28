@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "vff.h"
+
 enum { PLAYLOG_TITLE_CAP = 128, PLAYLOG_GAME_CODE_LEN = 4, PLAYLOG_MAKER_CODE_LEN = 2 };
 
 typedef struct {
@@ -19,7 +21,9 @@ typedef void playlog_session_fn(void *ctx, const playlog_session *session);
 
 /* Calls on_session for each play session in a Message Board image (cdb.vff).
    Each session has end_ticks >= start_ticks and a year from 2000 through
-   2099. */
-void playlog_each_session(const uint8_t *image, size_t image_len, playlog_session_fn *on_session, void *ctx);
+   2099. The parse reads the volume's directories and the start of each
+   file, and no other part of the image. Returns false when a read of the
+   image failed, so a session may have been missed. */
+bool playlog_each_session(const vff_image *image, playlog_session_fn *on_session, void *ctx);
 
 #endif

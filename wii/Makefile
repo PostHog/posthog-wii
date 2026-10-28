@@ -10,7 +10,7 @@ DEBUG_HOST ?=
 OUT := ../build/wii
 GEN := ../build/gen
 # Both builds link the game and the HTTP client with everything under it.
-SHARED := readonly.c http.c socket.c tls.c noise.c sdcard.c gfx.c play.c ../game/runner.c $(wildcard ../core/*.c) \
+SHARED := readonly.c buttons.c http.c socket.c tls.c noise.c sdcard.c gfx.c play.c ../game/runner.c $(wildcard ../core/*.c) \
 	$(GEN)/hedgehog_tpl.s
 HEADERS := $(wildcard *.h ../core/*.h ../game/*.h) $(GEN)/atlas.h roots.pem
 GUARD := ../tools/nand_guard.sh

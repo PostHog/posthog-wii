@@ -10,8 +10,8 @@ enum { TICKS_PER_SECOND = 60750000, ISO_TIME_CAP = 64, ISO_TIME_OF_DAY = 11 };
 /* Rounds to the nearest second. */
 uint64_t ticks_to_seconds(uint64_t ticks);
 
-/* utc_offset_minutes is console local time minus UTC. */
-int64_t ticks_to_unix_ms(uint64_t ticks, int utc_offset_minutes);
+/* Returns the console local time as if it were UTC. */
+int64_t ticks_to_unix_ms(uint64_t ticks);
 
 /* Writes "YYYY-MM-DDTHH:MM:SS.mmmZ". The date starts at out[0] and the
    time of day at out[ISO_TIME_OF_DAY] for every year from 0 through 9999. */

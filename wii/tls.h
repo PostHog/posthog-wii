@@ -7,11 +7,6 @@
 
 /* One TLS 1.2 connection at a time, over a libogc socket. */
 
-/* The certificate check compares dates in UTC, and the console's clock
-   holds local time. minutes is console local time minus UTC. It is 0 until
-   this call. */
-void tls_set_utc_offset(int minutes);
-
 /* Starts TLS on a connected socket. Returns true only when the server's
    certificate names host and chains to a trusted root. The trusted roots
    are wii/roots.pem and the owner's roots file on the SD card. The first

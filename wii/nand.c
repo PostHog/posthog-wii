@@ -1,63 +1,81 @@
 #include "nand.h"
 
-#include <malloc.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <string.h>
 
 #include <gccore.h>
 #include <ogc/isfs.h>
 
-enum { CHUNK_SIZE = 0x8000, IOS_ALIGNMENT = 32, FAILURE_CAP = 64 };
+#include "playlog.h"
+#include "vff.h"
+
+enum { CHUNK_SIZE = 0x1000, IOS_ALIGNMENT = 32, FAILURE_CAP = 64 };
 
 static const char MESSAGE_BOARD_PATH[] = "/title/00000001/00000002/data/cdb.vff";
 
-/* IOS reads its arguments from 32-byte aligned memory. */
+/* IOS reads its arguments from 32-byte aligned memory and writes the bytes
+   of a read to 32-byte aligned memory. */
 static fstats stats ATTRIBUTE_ALIGN(IOS_ALIGNMENT);
+static uint8_t chunk[CHUNK_SIZE] ATTRIBUTE_ALIGN(IOS_ALIGNMENT);
 
 static s32 error;
 
-static uint8_t *read_all(s32 file, size_t *len) {
-    error = ISFS_GetFileStats(file, &stats);
-    if (error < 0 || stats.file_length == 0) {
-        return NULL;
-    }
-    size_t size = stats.file_length;
-    uint8_t *image = memalign(IOS_ALIGNMENT, (size + IOS_ALIGNMENT - 1) / IOS_ALIGNMENT * IOS_ALIGNMENT);
-    if (!image) {
-        error = ISFS_ENOMEM;
-        return NULL;
-    }
-    for (size_t got = 0; got < size;) {
-        size_t want = size - got < CHUNK_SIZE ? size - got : CHUNK_SIZE;
-        s32 chunk_len = ISFS_Read(file, image + got, want);
-        if (chunk_len <= 0) {
-            error = chunk_len;
-            free(image);
-            return NULL;
+/* position is SIZE_MAX when a failed call left it unknown. Each IOS call is
+   a round trip, so a read that continues the last one skips the seek. */
+typedef struct {
+    s32 file;
+    size_t position;
+} open_file;
+
+/* /dev/fs numbers the whence values of a seek as stdio does, with 0 for the
+   start of the file (Dolphin, Source/Core/Core/IOS/FS/FileSystem.h). */
+static bool read_at(void *source, size_t offset, uint8_t *out, size_t len) {
+    open_file *open = source;
+    if (open->position != offset) {
+        open->position = SIZE_MAX;
+        s32 position = ISFS_Seek(open->file, (s32)offset, SEEK_SET);
+        if (position < 0) {
+            error = position;
+            return false;
         }
-        got += (size_t)chunk_len;
     }
-    *len = size;
-    return image;
+    open->position = SIZE_MAX;
+    for (size_t done = 0; done < len;) {
+        size_t want = len - done < CHUNK_SIZE ? len - done : CHUNK_SIZE;
+        s32 got = ISFS_Read(open->file, chunk, want);
+        if (got <= 0) {
+            /* A read of 0 bytes means the file ended before the walk expected. */
+            error = got < 0 ? got : ISFS_EINVAL;
+            return false;
+        }
+        memcpy(out + done, chunk, (size_t)got);
+        done += (size_t)got;
+    }
+    open->position = offset + len;
+    return true;
 }
 
-uint8_t *nand_read_message_board(size_t *len) {
-    uint8_t *image = NULL;
+bool nand_each_session(playlog_session_fn *on_session, void *ctx) {
     error = ISFS_Initialize();
     if (error < 0) {
-        return NULL;
+        return false;
     }
     s32 file = ISFS_Open(MESSAGE_BOARD_PATH, ISFS_OPEN_READ);
+    error = file < 0 ? file : ISFS_GetFileStats(file, &stats);
+    bool read_whole = false;
+    if (error >= 0) {
+        open_file open = {file, 0};
+        const vff_image image = {read_at, &open, stats.file_length};
+        read_whole = playlog_each_session(&image, on_session, ctx);
+    }
     if (file >= 0) {
-        image = read_all(file, len);
         ISFS_Close(file);
-    } else {
-        error = file;
     }
     ISFS_Deinitialize();
-    return image;
+    return read_whole;
 }
 
 const char *nand_failure(void) {

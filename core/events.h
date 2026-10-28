@@ -2,12 +2,13 @@
 #define EVENTS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "playlog.h"
 
 typedef struct {
     const char *api_key;
-    int utc_offset_minutes; /* console local time minus UTC */
+    int64_t (*now_ms)(void); /* the console's clock now, in ticks_to_unix_ms form */
 } events_config;
 
 /* Enough for the body of session_count sessions. A session is two events,

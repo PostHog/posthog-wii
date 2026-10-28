@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #include <ogc/lwp_watchdog.h>
 
@@ -22,7 +21,7 @@
 #include "sdcard.h"
 #include "socket.h"
 
-enum { DIGEST_SIZE = 32, EXTRA_ROOTS_CAP = 16384, FAILURE_CAP = 64, SECONDS_PER_MINUTE = 60 };
+enum { DIGEST_SIZE = 32, EXTRA_ROOTS_CAP = 16384, FAILURE_CAP = 64 };
 
 /* PEM text must end in a zero byte for mbedTLS to read it. */
 static const char BUILT_IN_ROOTS[] = {
@@ -48,7 +47,6 @@ static mbedtls_x509_crt roots;
 static mbedtls_ssl_config config;
 static mbedtls_ssl_context session;
 static s32 session_socket;
-static int utc_offset_minutes;
 static const char *failure = "";
 
 /* mbedTLS documents its error codes as negative hexadecimal numbers. */
@@ -66,19 +64,6 @@ static void fail_handshake(int error) {
     } else {
         fail("The secure connection failed", error);
     }
-}
-
-void tls_set_utc_offset(int minutes) {
-    utc_offset_minutes = minutes;
-}
-
-/* The console's clock holds local time, and certificate dates are in UTC. */
-static mbedtls_time_t utc_now(mbedtls_time_t *out) {
-    mbedtls_time_t now = time(NULL) - ((mbedtls_time_t)utc_offset_minutes * SECONDS_PER_MINUTE);
-    if (out) {
-        *out = now;
-    }
-    return now;
 }
 
 /* mbedTLS calls the next two functions, because of wii/tls_config.h. */
@@ -145,7 +130,6 @@ static bool prepare(void) {
     if (prepared) {
         return true;
     }
-    mbedtls_platform_set_time(utc_now);
     mbedtls_platform_set_nv_seed(read_seed, write_seed);
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&random_bits);

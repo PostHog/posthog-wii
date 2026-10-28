@@ -9,6 +9,9 @@
    square on both. */
 enum { GFX_HEIGHT = 480 };
 
+/* Starts the video and shows the text console, where printf writes. */
+void gfx_console(void);
+
 /* Takes over the display from the text console. Returns the canvas width. */
 float gfx_init(void);
 

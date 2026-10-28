@@ -99,7 +99,7 @@ static void put_hex(text_builder *body, const uint8_t *data, size_t len) {
 }
 
 /* The digest covers only fields read from the console, so the same session
-   gets the same digest whatever UTC offset the user configures. */
+   gets the same digest on every run. */
 static void session_digest(const playlog_session *session, const char *label, uint8_t digest[SHA1_SIZE]) {
     uint8_t name[DIGEST_NAME_SIZE] = {0};
     size_t label_len = strlen(label);
@@ -135,13 +135,12 @@ static void put_event_uuid(text_builder *body, const playlog_session *session, c
 /* PostHog builds a session only from a UUIDv7 session ID, and its date
    filters drop a session whose embedded time is more than three days from
    its events. The ID embeds the session start in console local time. That
-   is within a day of the event time, and it does not change with the
-   configured UTC offset. */
+   is within a day of the event time that PostHog computes. */
 static void put_session_id(text_builder *body, const playlog_session *session) {
     uint8_t digest[SHA1_SIZE];
     session_digest(session, "session", digest);
     uint8_t uuid[UUID_SIZE];
-    put_be(uuid, (uint64_t)ticks_to_unix_ms(session->start_ticks, 0), UUID_TIME_SIZE);
+    put_be(uuid, (uint64_t)ticks_to_unix_ms(session->start_ticks), UUID_TIME_SIZE);
     memcpy(uuid + UUID_TIME_SIZE, digest, UUID_SIZE - UUID_TIME_SIZE);
     put_uuid(body, uuid, UUID_VERSION_TIME_ORDERED);
 }
@@ -187,10 +186,9 @@ static const char *title_type(char system_code) {
     }
 }
 
-static void put_event(text_builder *body, const events_config *config, const playlog_session *session, bool ended) {
-    uint64_t ticks = ended ? session->end_ticks : session->start_ticks;
+static void put_event(text_builder *body, const playlog_session *session, bool ended) {
     char timestamp[ISO_TIME_CAP];
-    unix_ms_to_iso(ticks_to_unix_ms(ticks, config->utc_offset_minutes), timestamp);
+    unix_ms_to_iso(ticks_to_unix_ms(ended ? session->end_ticks : session->start_ticks), timestamp);
 
     put(body, ended ? "{\"event\":\"game ended\"" : "{\"event\":\"game started\"");
     put(body, ",\"distinct_id\":");
@@ -221,16 +219,21 @@ size_t events_batch_json(const events_config *config, const playlog_session *ses
     text_builder body = {out, out_cap, 0};
     put(&body, "{\"api_key\":");
     put_json_string(&body, config->api_key);
-    /* The body has no sent_at field. PostHog shifts every timestamp by the
-       gap between sent_at and its own clock, which would move old sessions. */
+    /* The console's clock holds local time with no time zone. PostHog moves
+       every timestamp by the gap between sent_at and its own clock, which
+       turns console local time into UTC. */
+    char sent_at[ISO_TIME_CAP];
+    unix_ms_to_iso(config->now_ms(), sent_at);
+    put(&body, ",\"sent_at\":");
+    put_json_string(&body, sent_at);
     put(&body, ",\"historical_migration\":true,\"batch\":[");
     for (size_t i = 0; i < count; i++) {
         if (i > 0) {
             put_char(&body, ',');
         }
-        put_event(&body, config, &sessions[i], false);
+        put_event(&body, &sessions[i], false);
         put_char(&body, ',');
-        put_event(&body, config, &sessions[i], true);
+        put_event(&body, &sessions[i], true);
     }
     put(&body, "]}");
     if (body.len >= body.cap) {
