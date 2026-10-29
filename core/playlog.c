@@ -190,8 +190,8 @@ static void parse_file(void *ctx, const uint8_t *head, size_t head_len) {
     }
 }
 
-void playlog_each_session(const uint8_t *image, size_t image_len, playlog_session_fn *on_session, void *ctx) {
+bool playlog_each_session(const vff_image *image, playlog_session_fn *on_session, void *ctx) {
     uint8_t scratch[LOG_FILE_CAP];
     sink out = {on_session, ctx};
-    vff_each_file(image, image_len, scratch, sizeof scratch, parse_file, &out);
+    return vff_each_file(image, scratch, sizeof scratch, parse_file, &out);
 }

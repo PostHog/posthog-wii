@@ -17,6 +17,7 @@
 #include "summary.h"
 #include "ticks.h"
 #include "upload.h"
+#include "vff.h"
 
 enum {
     VFF_HEADER_BYTE_ORDER = 0x04,
@@ -93,8 +94,7 @@ enum {
     UNIX_SECONDS_AT_2000 = 946684800,
     MS_PER_SECOND = 1000,
     UUID_TIME_LOW_RANGE = 0x10000,
-    PUERTO_RICO_OFFSET_MINUTES = -240,
-    SAVED_OFFSET_MINUTES = 60,
+    SECONDS_PER_HOUR = 3600,
     HTTP_SERVER_ERROR = 500,
 };
 
@@ -127,6 +127,7 @@ typedef struct {
 typedef struct {
     playlog_session items[COLLECT_CAP];
     int count;
+    bool read_whole;
 } collected;
 
 static void collect(void *ctx, const playlog_session *session) {
@@ -273,10 +274,37 @@ static uint8_t *build_image(const uint8_t *log) {
     return image;
 }
 
-static collected sessions_in(const uint8_t *image, size_t len) {
+/* An image in memory that counts what the parse reads and can fail after a
+   number of reads. */
+typedef struct {
+    const uint8_t *data;
+    size_t len;
+    size_t reads_left;
+    size_t bytes_read;
+} memory_image;
+
+static bool read_memory(void *source, size_t offset, uint8_t *out, size_t len) {
+    memory_image *image = source;
+    CHECK(offset <= image->len && len <= image->len - offset);
+    if (image->reads_left == 0) {
+        return false;
+    }
+    image->reads_left--;
+    image->bytes_read += len;
+    memcpy(out, image->data + offset, len);
+    return true;
+}
+
+static collected sessions_in_memory(memory_image *image) {
     collected found = {0};
-    playlog_each_session(image, len, collect, &found);
+    const vff_image reader = {read_memory, image, image->len};
+    found.read_whole = playlog_each_session(&reader, collect, &found);
     return found;
+}
+
+static collected sessions_in(const uint8_t *image, size_t len) {
+    memory_image source = {.data = image, .len = len, .reads_left = SIZE_MAX};
+    return sessions_in_memory(&source);
 }
 
 static collected sessions_in_log(const entry_spec *entries, size_t count) {
@@ -360,6 +388,38 @@ static void test_survives_damaged_images(void) {
     free(image);
 }
 
+static uint8_t *one_session_image(void) {
+    const entry_spec entries[] = {{"RMCE", MARIO_KART, NULL, START, START + SECOND, true}};
+    uint8_t log[LOG_SIZE];
+    build_log(log, entries, 1);
+    return build_image(log);
+}
+
+static void test_reads_only_the_directories_and_the_file_heads(void) {
+    uint8_t *image = one_session_image();
+    memory_image source = {.data = image, .len = IMAGE_SIZE, .reads_left = SIZE_MAX};
+
+    CHECK(sessions_in_memory(&source).count == 1);
+    /* The image holds two files. Its directories and the FAT entries that
+       lead to them fit in a few clusters. */
+    CHECK(source.bytes_read <= VFF_HEADER_SIZE + (2 * LOG_SIZE) + (8 * CLUSTER_SIZE));
+    free(image);
+}
+
+static void test_a_failed_read_gives_fewer_sessions_and_says_so(void) {
+    uint8_t *image = one_session_image();
+    memory_image whole = {.data = image, .len = IMAGE_SIZE, .reads_left = SIZE_MAX};
+    collected all = sessions_in_memory(&whole);
+    CHECK(all.count == 1 && all.read_whole);
+
+    for (size_t reads = 0; reads < SIZE_MAX - whole.reads_left; reads++) {
+        memory_image failing = {.data = image, .len = IMAGE_SIZE, .reads_left = reads};
+        collected found = sessions_in_memory(&failing);
+        CHECK(found.count <= 1 && !found.read_whole);
+    }
+    free(image);
+}
+
 typedef struct {
     char text[JSON_VALUE_CAP];
 } json_value;
@@ -382,6 +442,11 @@ static json_value json_string(const char *json, int occurrence, const char *key)
     return value;
 }
 
+/* 2022-11-15 22:44:24 console local time, an hour after START. */
+static int64_t console_clock(void) {
+    return ((int64_t)START_SECONDS + UNIX_SECONDS_AT_2000 + SECONDS_PER_HOUR) * MS_PER_SECOND;
+}
+
 static void test_builds_the_batch_body(void) {
     const playlog_session session = {
         .console_id = CONSOLE_ID,
@@ -391,31 +456,26 @@ static void test_builds_the_batch_body(void) {
         .maker_code = "01",
         .title = "Say \"hi\"\\\n",
     };
-    const events_config puerto_rico = {.api_key = "phc_test", .utc_offset_minutes = PUERTO_RICO_OFFSET_MINUTES};
-    const events_config utc = {.api_key = "phc_test", .utc_offset_minutes = 0};
+    const events_config config = {.api_key = "phc_test", .now_ms = console_clock};
     char json[EVENTS_JSON_CAP(1)];
-    char json_utc[EVENTS_JSON_CAP(1)];
 
-    size_t len = events_batch_json(&puerto_rico, &session, 1, json, sizeof json);
-    (void)events_batch_json(&utc, &session, 1, json_utc, sizeof json_utc);
+    size_t len = events_batch_json(&config, &session, 1, json, sizeof json);
 
-    static const char envelope[] = "{\"api_key\":\"phc_test\",\"historical_migration\":true,\"batch\":[";
+    static const char envelope[] = "{\"api_key\":\"phc_test\",\"sent_at\":\"2022-11-15T22:44:24.000Z\","
+                                   "\"historical_migration\":true,\"batch\":[";
     CHECK(len == strlen(json));
     CHECK(strncmp(json, envelope, sizeof envelope - 1) == 0);
     CHECK(strstr(json, "\"event\":\"game started\"") != NULL);
     CHECK(strstr(json, "\"event\":\"game ended\"") != NULL);
-    CHECK(strstr(json, "\"timestamp\":\"2022-11-16T01:44:24.500Z\"") != NULL);
-    CHECK(strstr(json, "\"timestamp\":\"2022-11-16T01:44:35.500Z\"") != NULL);
+    CHECK(strstr(json, "\"timestamp\":\"2022-11-15T21:44:24.500Z\"") != NULL);
+    CHECK(strstr(json, "\"timestamp\":\"2022-11-15T21:44:35.500Z\"") != NULL);
     CHECK(strstr(json, "\"game_title\":\"Say \\\"hi\\\"\\\\\\u000a\"") != NULL);
     CHECK(strstr(json, "\"title_type\":\"channel\"") != NULL);
     CHECK(strstr(json, "\"duration_seconds\":11}") != NULL);
-    CHECK(strstr(json, "sent_at") == NULL);
 
     json_value started = json_string(json, 0, "uuid");
     json_value ended = json_string(json, 1, "uuid");
-    json_value started_utc = json_string(json_utc, 0, "uuid");
     json_value session_id = json_string(json, 0, "$session_id");
-    json_value session_id_utc = json_string(json_utc, 0, "$session_id");
     uint64_t local_start_ms = (((uint64_t)START_SECONDS + UNIX_SECONDS_AT_2000) * MS_PER_SECOND) + (MS_PER_SECOND / 2);
     char expected_prefix[JSON_VALUE_CAP];
     (void)snprintf(expected_prefix, sizeof expected_prefix, "%08llx-%04llx-7",
@@ -424,11 +484,9 @@ static void test_builds_the_batch_body(void) {
 
     CHECK(strlen(started.text) == 36 && started.text[14] == '5');
     CHECK(strcmp(started.text, ended.text) != 0);
-    CHECK(strcmp(started.text, started_utc.text) == 0);
-    CHECK(strcmp(session_id.text, session_id_utc.text) == 0);
     CHECK(strncmp(session_id.text, expected_prefix, strlen(expected_prefix)) == 0);
 
-    CHECK(events_batch_json(&utc, &session, 1, json, 64) == 0);
+    CHECK(events_batch_json(&config, &session, 1, json, 64) == 0);
 }
 
 typedef struct {
@@ -459,7 +517,7 @@ static long record_post(const http_request *request, char *answer, size_t answer
 }
 
 static bool upload_sessions(upload *batch, const playlog_session *session, int count, planned_failure failure) {
-    events_config config = {.api_key = "phc_test"};
+    events_config config = {.api_key = "phc_test", .now_ms = console_clock};
     memset(&posted, 0, sizeof posted);
     posted.failure = failure;
     upload_begin(batch, &config, "http://example.com", record_post);
@@ -520,24 +578,21 @@ static void test_reads_a_settings_file_saved_by_a_text_editor(void) {
     static const char text[] = "\xEF\xBB\xBFhost = http://192.168.1.20:8010/\r\n"
                                "# my project\r\n"
                                "api_key=phc_abc\r\n"
-                               "color = red\r\n"
-                               "utc_offset = -04:00";
+                               "color = red\r\n";
     settings parsed = {0};
     settings_parse(&parsed, text, sizeof text - 1);
 
     CHECK(strcmp(parsed.host, "http://192.168.1.20:8010") == 0);
     CHECK(strcmp(parsed.api_key, "phc_abc") == 0);
-    CHECK(parsed.utc_offset_minutes == PUERTO_RICO_OFFSET_MINUTES);
 }
 
 static void test_a_settings_value_that_cannot_be_used_changes_nothing(void) {
     char text[SETTINGS_VALUE_CAP * 2];
-    int len = snprintf(text, sizeof text, "utc_offset = 4\napi_key = %0*d\n", SETTINGS_VALUE_CAP, 0);
-    settings parsed = {.api_key = "phc_abc", .utc_offset_minutes = SAVED_OFFSET_MINUTES};
+    int len = snprintf(text, sizeof text, "api_key = %0*d\n", SETTINGS_VALUE_CAP, 0);
+    settings parsed = {.api_key = "phc_abc"};
     settings_parse(&parsed, text, (size_t)len);
 
     CHECK(strcmp(parsed.api_key, "phc_abc") == 0);
-    CHECK(parsed.utc_offset_minutes == SAVED_OFFSET_MINUTES);
 }
 
 static void test_a_cursor_counts_only_for_its_own_host_and_token(void) {
@@ -574,6 +629,8 @@ int main(void) {
     test_reads_sessions_from_a_fragmented_image();
     test_skips_entries_that_cannot_be_sessions();
     test_survives_damaged_images();
+    test_reads_only_the_directories_and_the_file_heads();
+    test_a_failed_read_gives_fewer_sessions_and_says_so();
     test_builds_the_batch_body();
     test_uploads_in_requests_and_stops_at_the_first_failure();
     test_a_full_request_of_the_longest_sessions_fits_its_buffer();

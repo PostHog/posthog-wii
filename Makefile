@@ -57,8 +57,7 @@ SHOTS_PORT := 18010
 # What "make dolphin" and "make sd" write to the settings file.
 HOST ?= http://localhost:8010
 API_KEY ?=
-UTC_OFFSET ?= +00:00
-write_settings = printf 'host = %s\napi_key = %s\nutc_offset = %s\n' '$(HOST)' '$(API_KEY)' '$(UTC_OFFSET)' > $(1)
+write_settings = printf 'host = %s\napi_key = %s\n' '$(HOST)' '$(API_KEY)' > $(1)
 # The random seed that an https send needs. mbedTLS reads 64 bytes of it. See wii/tls_config.h.
 write_seed = head -c 64 /dev/urandom > $(1)
 
@@ -142,7 +141,7 @@ wii: build/gen/atlas.png | $(MBEDTLS)
 
 # A console cannot reach the default HOST, which is this computer's own address.
 sd: wii $(SD)/icon.png
-	@test '$(origin HOST)' != file -a -n '$(API_KEY)' || { echo 'sd: pass HOST, API_KEY and UTC_OFFSET' >&2; exit 1; }
+	@test '$(origin HOST)' != file -a -n '$(API_KEY)' || { echo 'sd: pass HOST and API_KEY' >&2; exit 1; }
 	cp build/wii/boot.dol wii/meta.xml $(SD)/
 	$(call write_settings,$(SD)/settings.txt)
 	$(call write_seed,$(SD)/seed.bin)

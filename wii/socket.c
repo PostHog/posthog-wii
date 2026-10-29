@@ -31,7 +31,9 @@ static bool past(u64 start, u32 limit_ms) {
 }
 
 /* net_init never returns on a console with no network device, so the start
-   runs in the background and the app stops waiting for it at the limit. */
+   runs in the background and the app stops waiting for it at the limit. The
+   start stays in the background after that, because net_deinit waits for it
+   to finish with no limit. */
 static s32 start_network(u64 start) {
     s32 result = net_init_async(NULL, NULL);
     if (result < 0) {
@@ -39,7 +41,6 @@ static s32 start_network(u64 start) {
     }
     while ((result = net_get_status()) == -EBUSY) {
         if (past(start, NETWORK_WAIT_MS)) {
-            net_deinit();
             return -ETIMEDOUT;
         }
         usleep(RETRY_DELAY_US);

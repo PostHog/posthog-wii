@@ -1,14 +1,16 @@
 #ifndef NAND_H
 #define NAND_H
 
-#include <stddef.h>
-#include <stdint.h>
+#include <stdbool.h>
 
-/* Reads the Message Board file from the console NAND into a new buffer that
-   the caller frees. Returns NULL when the file cannot be read. */
-uint8_t *nand_read_message_board(size_t *len);
+#include "playlog.h"
 
-/* A line of text that says why the last read returned NULL. */
+/* Calls on_session for each play session in the Message Board file on the
+   console NAND. Returns false when the file cannot be opened or a read of it
+   fails. The sessions before a failed read still reach on_session. */
+bool nand_each_session(playlog_session_fn *on_session, void *ctx);
+
+/* A line of text that says why the last call returned false. */
 const char *nand_failure(void);
 
 #endif

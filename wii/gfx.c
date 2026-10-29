@@ -14,6 +14,7 @@
 /* The setup follows the gxSprites example that ships with libogc. */
 
 enum {
+    CONSOLE_MARGIN = 20,
     FIFO_SIZE = 256 * 1024,
     FIFO_ALIGNMENT = 32,
     CANVAS_WIDTH_4_3 = 640,
@@ -59,10 +60,37 @@ static void draw_quad(area screen, uint32_t rgb, area texture) {
     GX_End();
 }
 
+/* The heap can hand out memory that still has dirty lines in the data cache.
+   The app reaches a display buffer only through its uncached address, so a
+   line written back later would show on screen. */
+static void *new_framebuffer(void) {
+    void *cached = SYS_AllocateFramebuffer(mode);
+    DCInvalidateRange(cached, VIDEO_GetFrameBufferSize(mode));
+    void *uncached = MEM_K0_TO_K1(cached);
+    VIDEO_ClearFrameBuffer(mode, uncached, COLOR_BLACK);
+    return uncached;
+}
+
+void gfx_console(void) {
+    VIDEO_Init();
+    mode = VIDEO_GetPreferredMode(NULL);
+    void *framebuffer = new_framebuffer();
+    console_init(framebuffer, CONSOLE_MARGIN, CONSOLE_MARGIN, mode->fbWidth - CONSOLE_MARGIN,
+                 mode->xfbHeight - CONSOLE_MARGIN, mode->fbWidth * VI_DISPLAY_PIX_SZ);
+    VIDEO_Configure(mode);
+    VIDEO_SetNextFramebuffer(framebuffer);
+    VIDEO_SetBlack(false);
+    VIDEO_Flush();
+    VIDEO_WaitVSync();
+    if (mode->viTVMode & VI_NON_INTERLACE) {
+        VIDEO_WaitVSync();
+    }
+}
+
 float gfx_init(void) {
     mode = VIDEO_GetPreferredMode(NULL);
-    framebuffers[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(mode));
-    framebuffers[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(mode));
+    framebuffers[0] = new_framebuffer();
+    framebuffers[1] = new_framebuffer();
     VIDEO_Configure(mode);
     VIDEO_SetNextFramebuffer(framebuffers[0]);
     VIDEO_SetBlack(false);
@@ -75,6 +103,10 @@ float gfx_init(void) {
 
     void *fifo = memalign(FIFO_ALIGNMENT, FIFO_SIZE);
     memset(fifo, 0, FIFO_SIZE);
+    /* The CPU sends commands through the write-gather pipe, which skips the
+       data cache. A dirty line left by the memset would later overwrite
+       commands in memory that the GPU has not read yet. */
+    DCFlushRange(fifo, FIFO_SIZE);
     GX_Init(fifo, FIFO_SIZE);
 
     GX_SetViewport(0, 0, mode->fbWidth, mode->efbHeight, 0, 1);

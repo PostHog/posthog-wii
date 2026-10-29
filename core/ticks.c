@@ -34,9 +34,8 @@ uint64_t ticks_to_seconds(uint64_t ticks) {
     return (ticks / TICKS_PER_SECOND) + (ticks % TICKS_PER_SECOND >= TICKS_PER_SECOND / 2 ? 1 : 0);
 }
 
-int64_t ticks_to_unix_ms(uint64_t ticks, int utc_offset_minutes) {
-    int64_t seconds =
-        (int64_t)(ticks / TICKS_PER_SECOND) + UNIX_SECONDS_AT_2000 - ((int64_t)utc_offset_minutes * SECONDS_PER_MINUTE);
+int64_t ticks_to_unix_ms(uint64_t ticks) {
+    int64_t seconds = (int64_t)(ticks / TICKS_PER_SECOND) + UNIX_SECONDS_AT_2000;
     int64_t millis = (int64_t)(ticks % TICKS_PER_SECOND * MS_PER_SECOND / TICKS_PER_SECOND);
     return (seconds * MS_PER_SECOND) + millis;
 }

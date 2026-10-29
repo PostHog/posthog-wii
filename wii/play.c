@@ -10,6 +10,7 @@
 #include <wiiuse/wpad.h>
 
 #include "atlas.h"
+#include "buttons.h"
 #include "gfx.h"
 #include "runner.h"
 
@@ -244,7 +245,7 @@ void play_scripted(uint32_t seed, play_jump_fn *jump, play_shown_fn *shown) {
 
     for (unsigned tick = 0;; tick++) {
         WPAD_ScanPads();
-        if (WPAD_ButtonsDown(WPAD_CHAN_0) & WPAD_BUTTON_HOME) {
+        if (buttons_quit()) {
             return;
         }
         runner_step(&game, jump(&game, tick));

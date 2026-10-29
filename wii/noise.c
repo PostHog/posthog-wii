@@ -53,6 +53,9 @@ size_t noise_read(uint8_t *out, size_t cap) {
         }
         before = motion;
     }
+    /* A remote that keeps reporting motion never counts as idle, so it never
+       turns itself off. */
+    WPAD_SetDataFormat(WPAD_CHAN_0, WPAD_FMT_BTNS);
     return used;
 }
 

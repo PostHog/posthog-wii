@@ -5,10 +5,13 @@
 #include <stdlib.h>
 
 #include <gccore.h>
+#include <ogc/lwp_watchdog.h>
 #include <wiiuse/wpad.h>
 
+#include "buttons.h"
 #include "cursor.h"
 #include "events.h"
+#include "gfx.h"
 #include "http.h"
 #include "nand.h"
 #include "noise.h"
@@ -17,12 +20,10 @@
 #include "sdcard.h"
 #include "settings.h"
 #include "summary.h"
-#include "tls.h"
+#include "ticks.h"
 #include "upload.h"
 
-enum { CONSOLE_MARGIN = 20, SETTINGS_TEXT_CAP = 1024 };
-
-static const u32 CHOICE_BUTTONS = (u32)WPAD_BUTTON_A | (u32)WPAD_BUTTON_HOME;
+enum { SETTINGS_TEXT_CAP = 1024 };
 
 typedef struct {
     size_t found;
@@ -31,25 +32,6 @@ typedef struct {
     uint64_t cursor;
     upload batch;
 } sync_state;
-
-static void init_console(void) {
-    VIDEO_Init();
-    WPAD_Init();
-    GXRModeObj *mode = VIDEO_GetPreferredMode(NULL);
-    void *framebuffer = MEM_K0_TO_K1(SYS_AllocateFramebuffer(mode));
-    console_init(framebuffer, CONSOLE_MARGIN, CONSOLE_MARGIN, mode->fbWidth - CONSOLE_MARGIN,
-                 mode->xfbHeight - CONSOLE_MARGIN, mode->fbWidth * VI_DISPLAY_PIX_SZ);
-    VIDEO_Configure(mode);
-    VIDEO_SetNextFramebuffer(framebuffer);
-    VIDEO_ClearFrameBuffer(mode, framebuffer, COLOR_BLACK);
-    VIDEO_SetBlack(false);
-    VIDEO_Flush();
-    VIDEO_WaitVSync();
-    if (mode->viTVMode & VI_NON_INTERLACE) {
-        VIDEO_WaitVSync();
-    }
-    printf("\x1b[2;0H");
-}
 
 static void on_session(void *ctx, const playlog_session *session) {
     sync_state *state = ctx;
@@ -63,36 +45,38 @@ static void on_session(void *ctx, const playlog_session *session) {
     }
 }
 
+/* libogc starts the time base from the console's clock, in the play log's
+   ticks. */
+static int64_t console_now_ms(void) {
+    return ticks_to_unix_ms(gettime());
+}
+
 static void sync(void) {
     static settings config;
     static char settings_text[SETTINGS_TEXT_CAP];
     settings_parse(&config, settings_text, sdcard_read(SDCARD_SETTINGS_FILE, settings_text, sizeof settings_text));
-    tls_set_utc_offset(config.utc_offset_minutes);
 
-    /* The app prints this before the read, because the read is slow on a console. */
     printf("Reading the play history on this console.\n\n");
-    size_t image_len = 0;
-    uint8_t *image = nand_read_message_board(&image_len);
-    if (!image) {
-        printf("%s\n", nand_failure());
-        return;
-    }
 
     static sync_state state;
     state.sending = (bool)(config.host[0] != '\0' && config.api_key[0] != '\0');
     char cursor_text[CURSOR_TEXT_CAP];
     state.cursor = cursor_read(cursor_text, sdcard_read(SDCARD_CURSOR_FILE, cursor_text, sizeof cursor_text),
                                config.host, config.api_key);
-    const events_config events = {.api_key = config.api_key, .utc_offset_minutes = config.utc_offset_minutes};
+    const events_config events = {.api_key = config.api_key, .now_ms = console_now_ms};
     upload_begin(&state.batch, &events, config.host, http_post);
-    playlog_each_session(image, image_len, on_session, &state);
+    bool read_whole = nand_each_session(on_session, &state);
     bool delivered = upload_end(&state.batch);
-    free(image);
-    /* A failed upload leaves the cursor alone, so the next run sends the
-       same sessions again. PostHog merges events that share an ID. */
-    if (delivered && state.batch.sent > 0) {
+    /* A failed read or upload leaves the cursor alone, so the next run sends
+       the same sessions again. PostHog merges events that share an ID. A
+       session that a failed read skipped can be older than the newest one
+       found, and a new cursor would pass it by. */
+    if (read_whole && delivered && state.batch.sent > 0) {
         sdcard_write(SDCARD_CURSOR_FILE, cursor_text,
                      cursor_write(cursor_text, config.host, config.api_key, state.latest.start_ticks));
+    }
+    if (!read_whole) {
+        printf("%s\n", nand_failure());
     }
 
     printf("Sessions found: %u\n", (unsigned)state.found);
@@ -120,26 +104,35 @@ static void sync(void) {
     }
 }
 
-/* Returns true for A and false for HOME. */
-static bool wait_for_a_or_home(void) {
+/* Returns true for A and false for a button that ends the app. */
+static bool wait_for_play(void) {
     for (;;) {
         WPAD_ScanPads();
-        u32 pressed = WPAD_ButtonsDown(WPAD_CHAN_0);
-        if (pressed & CHOICE_BUTTONS) {
-            return (pressed & WPAD_BUTTON_A) != 0;
+        if (WPAD_ButtonsDown(WPAD_CHAN_0) & WPAD_BUTTON_A) {
+            return true;
+        }
+        if (buttons_quit()) {
+            return false;
         }
         VIDEO_WaitVSync();
     }
 }
 
 int main(void) {
-    init_console();
+    gfx_console();
+    printf("\x1b[2;0H");
+    WPAD_Init();
+    buttons_watch();
     printf("PostHog for Wii\n\n");
     sync();
     printf("\nPress A to play. Press HOME to exit.\n");
 
-    if (wait_for_a_or_home()) {
+    if (wait_for_play()) {
         play();
+    }
+    /* SYS_RETURNTOMENU would write state.dat to the NAND. */
+    if (buttons_power_off()) {
+        SYS_ResetSystem(SYS_POWEROFF, 0, 0);
     }
     exit(0);
 }

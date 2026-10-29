@@ -10,8 +10,8 @@ Two front ends share one C core: a host CLI (`wii2posthog`) and a Wii homebrew a
 - `make lint` builds the Wii app, runs every hook in `.pre-commit-config.yaml` on every file, then runs clang-tidy on every C file. It must pass before a commit. The hooks pin every linter but clang-tidy, which the Makefile pins.
 - `build/wii2posthog samples/cdb.vff --dry-run` prints the request bodies without sending.
 - `make wii` cross-compiles the Wii app in Docker to `build/wii/boot.elf` and `boot.dol`, then runs `tools/nand_guard.sh` on the result. The first run downloads mbedTLS into `assets/` and checks its hash.
-- `make sd HOST=https://us.i.posthog.com API_KEY=phc_... UTC_OFFSET=-04:00` builds `build/sd/apps/posthog-wii/`, the folder that goes on an SD card: `boot.dol`, `meta.xml`, `icon.png`, `settings.txt` and `seed.bin`.
-- `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_... UTC_OFFSET=-04:00` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the three values to the settings file on Dolphin's SD card, and a new seed file next to it. The first run copies `samples/cdb.vff` into its NAND.
+- `make sd HOST=https://us.i.posthog.com API_KEY=phc_...` builds `build/sd/apps/posthog-wii/`, the folder that goes on an SD card: `boot.dol`, `meta.xml`, `icon.png`, `settings.txt` and `seed.bin`.
+- `make dolphin HOST=http://127.0.0.1:18010 API_KEY=phc_...` boots that app in Dolphin with the isolated user folder `.dolphin/`. It writes the two values to the settings file on Dolphin's SD card, and a new seed file next to it. The first run copies `samples/cdb.vff` into its NAND.
 - `make shots` builds `build/wii/debug.elf`, runs it in Dolphin, and saves its frames to `build/shots/`. Read those PNGs to check any drawing change. They are the raw 640-pixel display buffer, so on a 16:9 console the picture looks squeezed sideways.
 - `uv run tools/listener.py <dir>` is a local stand-in for PostHog capture. Point `HOST` at `http://127.0.0.1:18010` and read `<dir>/posts.log`.
 
@@ -24,20 +24,21 @@ A local PostHog dev stack has two capture addresses. The proxy on port 8010 list
 | Path | Owns |
 | --- | --- |
 | `core/bytes.h` | Bounds-checked reads of image data, and big-endian writes |
-| `core/vff.c` | The VFF container and its FAT16 filesystem |
+| `core/vff.c` | The VFF container and its FAT16 filesystem, and which bytes of the image a walk reads through the front end's read function |
 | `core/playlog.c` | The daily play log record layout |
 | `core/ticks.c` | Wii tick time and its conversion to Unix time |
 | `core/events.c` | The PostHog event model and the request body |
 | `core/http_request.h` | The POST that a front end sends, and the type of the function that sends it |
 | `core/upload.c` | The request path, how many sessions a request carries, what answer counts as accepted, and stopping at the first failure |
 | `core/summary.c` | The one-line text form of a session that both front ends print |
-| `core/settings.c` | The settings file format and the notation for a UTC offset |
+| `core/settings.c` | The settings file format |
 | `core/cursor.c` | The cursor file format, and which host and token a cursor counts for |
 | `host/http.c` | libcurl. No other file includes `curl.h` |
 | `host/main.c` | Arguments, file reading and output for the CLI |
 | `game/runner.c` | The endless runner's rules for Max's jump, the track, collisions and the score. Portable code that draws nothing |
 | `game/autoplay.c` | A player that clears every fire, for the tests and the debug build |
 | `wii/nand.c` | ISFS. No other file reads the NAND |
+| `wii/buttons.c` | The console's RESET and POWER buttons and the Wii Remote's power button |
 | `wii/readonly.c` | The replacement for `IOS_Write`, linked into every Wii binary |
 | `wii/sdcard.c` | libfat. No other file touches the SD card. A read mounts the card read-only |
 | `wii/socket.c` | libogc sockets. No other file calls a `net_` function. The network start, a connect, a send and a receive each have a time limit. The name lookup has none, because libogc offers it only as a call that waits |

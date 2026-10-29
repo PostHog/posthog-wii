@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # Every ISFS and ES function a binary may contain. None of them writes.
-allowed='^(ISFS_(Initialize|Deinitialize|Open|GetFileStats|Read|Close)|ES_(GetTitleID|GetDeviceID|GetNumTicketViews|GetTicketViews|GetStoredTMD|ReadContent|LaunchTitle))$'
+allowed='^(ISFS_(Initialize|Deinitialize|Open|GetFileStats|Seek|Read|Close)|ES_(GetTitleID|GetDeviceID|GetNumTicketViews|GetTicketViews|GetStoredTMD|ReadContent|LaunchTitle))$'
 
 failed=0
 

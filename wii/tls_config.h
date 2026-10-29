@@ -1,13 +1,13 @@
 /* Changes to mbedTLS's default configuration. The Makefile passes this file
    to mbedTLS as MBEDTLS_USER_CONFIG_FILE. */
 
-/* libogc has no BSD sockets, no POSIX clock and no entropy device, and its
-   time() returns local time. tls.c supplies the socket calls, both clocks
-   and the entropy source. */
+/* libogc has no BSD sockets, no POSIX clock and no entropy device. tls.c
+   supplies the socket calls, the millisecond clock and the entropy source.
+   The certificate dates are in UTC and libogc's time() returns the console's
+   local time, so a date check can be off by the console's UTC offset. */
 #undef MBEDTLS_NET_C
 #undef MBEDTLS_TIMING_C
 #define MBEDTLS_PLATFORM_MS_TIME_ALT
-#define MBEDTLS_PLATFORM_TIME_ALT
 #define MBEDTLS_NO_PLATFORM_ENTROPY
 #define MBEDTLS_ENTROPY_HARDWARE_ALT
 

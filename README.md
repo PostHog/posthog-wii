@@ -24,23 +24,23 @@ This project reads those records and sends each play session to a PostHog projec
 3. Check what it found:
 
    ```sh
-   build/wii2posthog cdbackup.vff --utc-offset -04:00 --dry-run
+   build/wii2posthog cdbackup.vff --dry-run
    ```
 
 4. Send it:
 
    ```sh
-   build/wii2posthog cdbackup.vff --utc-offset -04:00 --host https://us.i.posthog.com --api-key phc_...
+   build/wii2posthog cdbackup.vff --host https://us.i.posthog.com --api-key phc_...
    ```
 
-The Wii stores local time without a time zone, so `--utc-offset` is the offset of the place where the console was used.
+The Wii stores local time without a time zone, so the tool reads the times in this computer's time zone. Run it in the time zone where the console was used.
 
 ## The Wii app
 
 Build the folder for the SD card:
 
 ```sh
-make sd HOST=https://us.i.posthog.com API_KEY=phc_... UTC_OFFSET=-04:00
+make sd HOST=https://us.i.posthog.com API_KEY=phc_...
 ```
 
 Copy `build/sd/apps` to the top of the card. The Homebrew Channel then lists the app as "PostHog for Wii".
@@ -50,12 +50,11 @@ The app reads `apps/posthog-wii/settings.txt` from the SD card, which `make sd` 
 ```
 host = https://us.i.posthog.com
 api_key = phc_...
-utc_offset = -04:00
 ```
 
 - `host` starts with `https://` or `http://`. Without a host and a project token the app sends nothing.
 - For an `https://` host the app checks the server's certificate. It trusts the five root certificates of Amazon Trust Services, which signs PostHog Cloud. For a host with another certificate authority, put that authority's root certificate, as PEM text, in `apps/posthog-wii/roots.pem`.
-- The certificate check needs the console's date to be right.
+- The certificate check and the event times need the console's date and time to be right. The app sends the console's current time with each request, and PostHog turns the console's local times into UTC from it.
 - An `https://` host also needs `apps/posthog-wii/seed.bin`, which `make sd` writes. A Wii has no source of random numbers, so the keys of a secure connection start from random bytes that the computer made. The app replaces the file on each run that sends over https.
 
 Each run sends only the sessions that are newer than the last one it sent. The app stores the start time of that session in `apps/posthog-wii/sent.txt`. Delete the file to send everything again.
